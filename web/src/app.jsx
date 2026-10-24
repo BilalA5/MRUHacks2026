@@ -136,8 +136,8 @@ function mirror(api, flash) {
 
 // Dimension: a dimension line with ticks and the length in mm, offset from each selected line.
 function dimension(api, flash) {
-  const lines = selectedOfType(api, ["line", "arrow"]);
-  if (!lines.length) return flash("Select a line first", "warn");
+  const lines = selectedOfType(api, ["line", "arrow", "freedraw"]);
+  if (!lines.length) return flash("Select a line or pen stroke first", "warn");
   const els = [];
   for (const el of lines) {
     const [p1, p2] = endsOf(el);
@@ -160,11 +160,12 @@ function dimension(api, flash) {
 
 // Diameter: a leader and "Ø mm" label on each selected circle.
 function diameter(api, flash) {
-  const circles = selectedOfType(api, ["ellipse"]).filter(el => Math.abs(el.width - el.height) < 1);
-  if (!circles.length) return flash("Select a circle first", "warn");
+  // Hand-drawn circles are rarely exact, so anything within 15% of round counts.
+  const circles = selectedOfType(api, ["ellipse"]).filter(el => Math.min(el.width, el.height) / Math.max(el.width, el.height) >= 0.85);
+  if (!circles.length) return flash("Select a circle or ellipse first", "warn");
   const els = [];
   for (const el of circles) {
-    const r = el.width / 2, cx = el.x + r, cy = el.y + r;
+    const r = (el.width + el.height) / 4, cx = el.x + el.width / 2, cy = el.y + el.height / 2;
     const edge = { x: cx + r * Math.SQRT1_2, y: cy - r * Math.SQRT1_2 };
     const end = { x: edge.x + 28, y: edge.y - 28 };
     const mm = (2 * r * MM_PER_PX).toFixed(1);

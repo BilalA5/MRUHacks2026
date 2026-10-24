@@ -36,6 +36,13 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 </head>
 <body>
 <div id="root"></div>
+<script>
+// iPad Safari zooms the whole page on pinch unless told not to. The board handles pinch itself.
+["gesturestart", "gesturechange", "gestureend"].forEach(function (type) {
+  document.addEventListener(type, function (e) { e.preventDefault(); }, { passive: false });
+});
+</script>
+
 <script>window.EXCALIDRAW_ASSET_PATH = "/dist/";</script>
 <script src="/dist/app.js"></script>
 </body>
