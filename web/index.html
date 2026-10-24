@@ -46,8 +46,8 @@ input,select{font-size:16px}
 }
 
 /* Flyouts: open below their button, scale in from that corner */
-.flyout{position:absolute;z-index:6;display:flex;flex-wrap:wrap;gap:4px;max-width:calc(100vw - 24px);padding:6px;background:rgba(255,255,255,.97);border:1px solid rgba(59,70,80,.12);border-radius:12px;box-shadow:0 10px 30px rgba(31,42,54,.14),0 1px 3px rgba(31,42,54,.07);transform-origin:top left;opacity:0;transform:scale(.97);pointer-events:none;transition:opacity 160ms ease,transform 180ms var(--ease-out)}
-.flyout.open{opacity:1;transform:none;pointer-events:auto}
+.flyout{position:absolute;z-index:6;display:flex;flex-wrap:wrap;gap:4px;max-width:calc(100vw - 24px);padding:6px;background:rgba(255,255,255,.97);border:1px solid rgba(59,70,80,.12);border-radius:12px;box-shadow:0 10px 30px rgba(31,42,54,.14),0 1px 3px rgba(31,42,54,.07);transform-origin:top left;opacity:0;transform:scale(.97);pointer-events:none;transition:opacity 120ms ease-in,transform 120ms ease-in}
+.flyout.open{opacity:1;transform:none;pointer-events:auto;transition:opacity 180ms ease-out,transform 200ms var(--ease-out)}
 .swatch.selected{background:#EAF0FF}
 
 /* Settings: sits inside the Edit group */
@@ -55,8 +55,8 @@ input,select{font-size:16px}
 #settingsBtn{width:42px;height:42px;border:0;background:transparent;border-radius:9px;display:grid;place-items:center;color:var(--accent);cursor:pointer;transition:transform 160ms var(--ease-out)}
 #settingsBtn:active{transform:scale(.97)}
 #settingsBtn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8}
-#settingsMenu{position:absolute;top:calc(100% + 8px);right:0;width:200px;padding:6px;background:#fff;border:1px solid #e3e7eb;border-radius:12px;box-shadow:0 12px 32px #1f2a361c;transform-origin:top right;opacity:0;transform:scale(.97);pointer-events:none;transition:opacity 160ms ease,transform 160ms var(--ease-out);z-index:7}
-#settingsMenu.open{opacity:1;transform:none;pointer-events:auto}
+#settingsMenu{position:absolute;top:calc(100% + 8px);right:0;width:200px;padding:6px;background:#fff;border:1px solid #e3e7eb;border-radius:12px;box-shadow:0 12px 32px #1f2a361c;transform-origin:top right;opacity:0;transform:scale(.97);pointer-events:none;transition:opacity 120ms ease-in,transform 120ms ease-in;z-index:7}
+#settingsMenu.open{opacity:1;transform:none;pointer-events:auto;transition:opacity 180ms ease-out,transform 200ms var(--ease-out)}
 .setting{display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:0 10px;font-size:14px;gap:12px}
 .setting input{width:20px;height:20px;accent-color:var(--accent)}
 
@@ -65,8 +65,8 @@ input,select{font-size:16px}
 #titleBtn:active{transform:scale(.97)}
 #titleBtn.hidden{opacity:0;pointer-events:none}
 #titleBtn .no{font-size:13px;font-weight:500;color:#65717c;font-variant-numeric:tabular-nums}
-#titlePanel{position:absolute;right:calc(var(--edge) + var(--safe-r));bottom:calc(var(--edge) + var(--safe-b));z-index:6;width:min(300px,calc(100vw - 2*var(--edge)));max-height:min(60vh,380px);display:flex;flex-direction:column;background:#fff;border:1px solid #d9dee3;border-radius:12px;box-shadow:0 14px 40px #1f2a3626;transform-origin:bottom right;opacity:0;transform:scale(.97);pointer-events:none;transition:opacity 180ms ease,transform 180ms var(--ease-out)}
-#titlePanel.open{opacity:1;transform:none;pointer-events:auto}
+#titlePanel{position:absolute;right:calc(var(--edge) + var(--safe-r));bottom:calc(var(--edge) + var(--safe-b));z-index:6;width:min(300px,calc(100vw - 2*var(--edge)));max-height:min(60vh,380px);display:flex;flex-direction:column;background:#fff;border:1px solid #d9dee3;border-radius:12px;box-shadow:0 14px 40px #1f2a3626;transform-origin:bottom right;opacity:0;transform:scale(.97);pointer-events:none;transition:opacity 140ms ease-in,transform 140ms ease-in}
+#titlePanel.open{opacity:1;transform:none;pointer-events:auto;transition:opacity 200ms ease-out,transform 200ms var(--ease-out)}
 .tp-head{display:flex;justify-content:space-between;align-items:center;min-height:48px;padding:0 10px 0 14px;border-bottom:1px solid #eef1f4;font-size:14px;font-weight:600}
 .tp-head button{min-height:40px;padding:0 12px;border:0;background:transparent;color:var(--accent);font-weight:600;font-size:14px;border-radius:8px;cursor:pointer}
 .tp-head button:active{transform:scale(.97)}
