@@ -36,6 +36,7 @@ input,select{font-size:16px}
 .tool.selected{background:#EAF0FF;color:var(--accent)}
 .tool.selected svg{stroke-width:2.2}
 .tool:disabled{opacity:.35;cursor:default;transform:none}
+.tool.zoom-label{width:auto;min-width:54px;padding:0 8px;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
 .tool.send{background:var(--accent);color:#fff}
 .tool.send:disabled{background:#8AA7EF;opacity:.7}
 @media (hover:hover) and (pointer:fine){
@@ -173,6 +174,11 @@ input,select{font-size:16px}
       <label class="setting">Hold to snap <input id="snapToggle" type="checkbox" checked></label>
     </div>
   </div>
+    </div>
+    <div class="group" role="group" aria-label="Zoom">
+      <button class="tool" id="zoomOut" aria-label="Zoom out"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path d="M20.75 12C20.75 12.4142 20.4142 12.75 20 12.75H4C3.58579 12.75 3.25 12.4142 3.25 12C3.25 11.5858 3.58579 11.25 4 11.25H20C20.4142 11.25 20.75 11.5858 20.75 12Z" fill="currentColor"/></svg></button>
+      <button class="tool zoom-label" id="zoomPct" aria-label="Reset zoom to 100%">100%</button>
+      <button class="tool" id="zoomIn" aria-label="Zoom in"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path d="M12 22C17.5 22 22 17.5 22 12C22 6.5 17.5 2 12 2C6.5 2 2 6.5 2 12C2 17.5 6.5 22 12 22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 12H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 16V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
     <div class="group" role="group" aria-label="Send">
       <button class="tool send" data-tool="send" data-tip="Send" aria-label="Send drawing to laptop">
@@ -507,7 +513,10 @@ input,select{font-size:16px}
   // World space to device pixels for the current view.
   function worldTransform(c) { c.setTransform(dpr * view.s, 0, 0, dpr * view.s, -view.x * view.s * dpr, -view.y * view.s * dpr); }
   // Changing the view invalidates the ink cache because the strokes move on screen.
-  function setView(x, y, s) { view = { x, y, s }; inkDirty = true; requestRender(); }
+  function setView(x, y, s) {
+    view = { x, y, s }; inkDirty = true; requestRender();
+    $('zoomPct').textContent = Math.round(s * 100) + '%';
+  }
   function zoomAt(screen, factor) {
     const s = Math.min(8, Math.max(.2, view.s * factor));
     const w = toWorld(screen);
@@ -969,6 +978,12 @@ input,select{font-size:16px}
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); act(e.shiftKey ? 'redo' : 'undo'); }
   });
+
+  // ---------- zoom buttons: zoom about the middle of the screen ----------
+  const screenCentre = () => { const r = canvas.getBoundingClientRect(); return { x: r.width / 2, y: r.height / 2 }; };
+  $('zoomIn').onclick = () => zoomAt(screenCentre(), 1.25);
+  $('zoomOut').onclick = () => zoomAt(screenCentre(), 0.8);
+  $('zoomPct').onclick = () => zoomAt(screenCentre(), 1 / view.s);
 
   // ---------- start ----------
   window.addEventListener('resize', resize);
