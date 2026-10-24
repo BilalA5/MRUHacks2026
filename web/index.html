@@ -220,14 +220,14 @@ body{user-select:none;-webkit-user-select:none}
     return best;
   }
   function snappedPoints(points){
-    if(!snap||points.length<5)return points;
+    if(!snap||points.length<5)return{points};
     const a=points[0],b=points[points.length-1],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);
-    if(len<35)return points;
+    if(len<35)return{points};
     const angle=Math.atan2(dy,dx),near=Math.round(angle/(Math.PI/4))*(Math.PI/4);
     if(Math.abs(angle-near)<.055){
       const end={x:a.x+Math.cos(near)*len,y:a.y+Math.sin(near)*len,p:b.p};
       showToast('Line');
-      return [a,end];
+      return{points:[a,end],shape:{kind:'line',a:{x:a.x,y:a.y},b:{x:end.x,y:end.y}}};
     }
     // Detect roughly circular loops, retaining the start point as the center estimate.
     const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
@@ -235,9 +235,11 @@ body{user-select:none;-webkit-user-select:none}
     const close=Math.hypot(a.x-b.x,a.y-b.y)<Math.max(width,height)*.28;
     if(close&&width>24&&height>24&&Math.max(width,height)/Math.min(width,height)<1.3){
       const cx=(Math.min(...xs)+Math.max(...xs))/2,cy=(Math.min(...ys)+Math.max(...ys))/2,r=(width+height)/4;
-      showToast('Circle');return Array.from({length:65},(_,i)=>({x:cx+r*Math.cos(i/64*Math.PI*2),y:cy+r*Math.sin(i/64*Math.PI*2),p:.5}));
+      showToast('Circle');
+      const ring=Array.from({length:65},(_,i)=>({x:cx+r*Math.cos(i/64*Math.PI*2),y:cy+r*Math.sin(i/64*Math.PI*2),p:.5}));
+      return{points:ring,shape:{kind:'circle',cx,cy,r}};
     }
-    return points;
+    return{points};
   }
   canvas.addEventListener('pointerdown',e=>{
     // Apple Pencil only: finger touches on the sheet are ignored for palm rejection.
@@ -258,7 +260,7 @@ body{user-select:none;-webkit-user-select:none}
     if(active){e.preventDefault();active.points.push(p);render()}
     else if(dimFirst&&tool==='dimension'){dimPreview=p;render()}
   });
-  function finishStroke(){if(!active)return;active.points=snappedPoints(active.points);strokes.push(active);active=null;redoStack=[];updateUndo();render()}
+  function finishStroke(){if(!active)return;const snapped=snappedPoints(active.points);active.points=snapped.points;if(snapped.shape)active.shape=snapped.shape;strokes.push(active);active=null;redoStack=[];updateUndo();render()}
   canvas.addEventListener('pointerup',finishStroke);canvas.addEventListener('pointercancel',finishStroke);
   canvas.addEventListener('pointerleave',()=>{if(active)finishStroke()});
   function openDimension(p){
