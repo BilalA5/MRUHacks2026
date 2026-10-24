@@ -40,6 +40,9 @@ input,select{font-size:16px}
 .tool.send{background:var(--accent);color:#fff}
 .tool.send:disabled{background:#8AA7EF;opacity:.7}
 .separator{height:1px;background:#dfe3e7;margin:3px 4px;flex:none}
+/* Geometry flyout: opens to the right of the toolbar */
+#geoFlyout{position:absolute;left:calc(var(--edge) + var(--safe-l) + 56px + 8px);top:50%;z-index:5;display:flex;flex-direction:column;gap:4px;padding:6px;background:rgba(255,255,255,.96);border:1px solid rgba(59,70,80,.12);border-radius:12px;box-shadow:0 8px 28px rgba(31,42,54,.12),0 1px 3px rgba(31,42,54,.07);transform-origin:left center;opacity:0;transform:translateY(-50%) scale(.97);pointer-events:none;transition:opacity 160ms ease,transform 160ms var(--ease-out)}
+#geoFlyout.open{opacity:1;transform:translateY(-50%);pointer-events:auto}
 @media (hover:hover) and (pointer:fine){
   .tool:hover{background:#f0f3f6}
   .tool.selected:hover{background:#dfe8ff}
@@ -117,6 +120,7 @@ input,select{font-size:16px}
   #hint{top:calc(56px + var(--safe-t));max-width:calc(100vw - 150px);font-size:13px}
   #settings{top:calc(56px + var(--safe-t))}
   #status{font-size:12px;padding:6px 10px}
+  #geoFlyout{left:calc(10px + var(--safe-l) + 50px + 8px)}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
 </style>
@@ -144,12 +148,10 @@ input,select{font-size:16px}
     <button class="tool mode" data-tool="circle" data-tip="Circle" aria-label="Circle" aria-pressed="false">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>
     </button>
-    <button class="tool mode" data-tool="ruler" data-tip="Ruler" aria-label="Ruler" aria-pressed="false">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.6882 4.14229L14.6516 5.10571C14.9445 5.3986 14.9445 5.87348 14.6516 6.16637C14.3588 6.45926 13.8839 6.45926 13.591 6.16637L12.6269 5.20228L11.5662 6.26294L13.2374 7.93414C13.5303 8.22703 13.5303 8.7019 13.2374 8.9948C12.9445 9.28769 12.4697 9.28769 12.1768 8.9948L10.5056 7.3236L9.44492 8.38426L10.409 9.34835C10.7019 9.64124 10.7019 10.1161 10.409 10.409C10.1161 10.7019 9.64124 10.7019 9.34835 10.409L8.38426 9.44492L7.3236 10.5056L8.9948 12.1768C9.28769 12.4697 9.28769 12.9445 8.9948 13.2374C8.7019 13.5303 8.22703 13.5303 7.93414 13.2374L6.26294 11.5662L5.20228 12.6269L6.16637 13.591C6.45926 13.8839 6.45926 14.3588 6.16637 14.6516C5.87348 14.9445 5.3986 14.9445 5.10571 14.6516L4.14229 13.6882C3.67802 14.1568 3.34308 14.5094 3.10761 14.818C2.81761 15.1981 2.75 15.422 2.75 15.6157C2.75 15.8094 2.81762 16.0334 3.10761 16.4135C3.41081 16.8109 3.87892 17.2812 4.5757 17.978L6.022 19.4243C6.71878 20.1211 7.18914 20.5892 7.58653 20.8924C7.96662 21.1824 8.19057 21.25 8.38426 21.25C8.57795 21.25 8.8019 21.1824 9.18198 20.8924C9.57938 20.5892 10.0497 20.1211 10.7465 19.4243L19.4243 10.7465C20.1211 10.0497 20.5892 9.57938 20.8924 9.18198C21.1824 8.8019 21.25 8.57795 21.25 8.38426C21.25 8.19057 21.1824 7.96662 20.8924 7.58653C20.5892 7.18914 20.1211 6.71878 19.4243 6.022L17.978 4.5757C17.2812 3.87892 16.8109 3.41081 16.4135 3.10761C16.0334 2.81762 15.8094 2.75 15.6157 2.75C15.422 2.75 15.1981 2.81761 14.818 3.10761C14.5094 3.34308 14.1568 3.67802 13.6882 4.14229ZM13.9081 1.91508C14.4217 1.52328 14.9622 1.25 15.6157 1.25C16.2693 1.25 16.8098 1.52328 17.3233 1.91508C17.8104 2.28666 18.3514 2.82777 19.0017 3.47812L20.5219 4.99824C21.1722 5.64856 21.7133 6.18964 22.0849 6.67666C22.4767 7.19017 22.75 7.73073 22.75 8.38426C22.75 9.03779 22.4767 9.57834 22.0849 10.0919C21.7133 10.5789 21.1722 11.12 20.5219 11.7703L11.7703 20.5219C11.12 21.1722 10.5789 21.7133 10.0919 22.0849C9.57834 22.4767 9.03779 22.75 8.38426 22.75C7.73073 22.75 7.19017 22.4767 6.67666 22.0849C6.18964 21.7133 5.64856 21.1722 4.99824 20.5219L3.47812 19.0017C2.82777 18.3514 2.28666 17.8104 1.91508 17.3233C1.52328 16.8098 1.25 16.2693 1.25 15.6157C1.25 14.9622 1.52328 14.4217 1.91508 13.9081C2.28667 13.4211 2.82779 12.88 3.47816 12.2297L12.2297 3.47815C12.88 2.82778 13.4211 2.28666 13.9081 1.91508Z" fill="currentColor"/></svg>
-    </button>
     <button class="tool mode" data-tool="dimension" data-tip="Dimension" aria-label="Dimension" aria-pressed="false">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path d="M9.00999 20.5L3.98999 15.49" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.01001 3.5V20.5" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.99 3.5L20.01 8.51" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.99 20.5V3.5" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
+    <button class="tool" id="geoBtn" data-tip="Geometry" aria-label="Geometry tools" aria-expanded="false" aria-controls="geoFlyout"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><circle cx="18" cy="8" r="4.3333" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></circle><rect x="6.3333" y="14.3333" width="7.3333" height="7.3333" rx="1.3333" ry="1.3333" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></rect><path d="M 5.0907 2.6533 L 1.5853 8.664 c -0.2587 0.444 0.0613 1.0027 0.576 1.0027 H 9.172 c 0.5147 0 0.8347 -0.5587 0.576 -1.0027 L 6.2427 2.6533 c -0.2573 -0.4413 -0.8947 -0.4413 -1.152 0 Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg></button>
     <div class="separator" role="separator"></div>
     <button class="tool" data-tool="undo" data-tip="Undo" aria-label="Undo" disabled>
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.53033 3.46967C7.82322 3.76256 7.82322 4.23744 7.53033 4.53033L5.81066 6.25L15.0358 6.25C15.94 6.24999 16.6693 6.24998 17.2576 6.3033C17.864 6.35826 18.3938 6.47456 18.875 6.75241C19.4451 7.08154 19.9185 7.55492 20.2476 8.12499C20.5254 8.60624 20.6417 9.13604 20.6967 9.74239C20.75 10.3307 20.75 11.06 20.75 11.9643V12.0358C20.75 12.94 20.75 13.6693 20.6967 14.2576C20.6418 14.8639 20.5255 15.3937 20.2476 15.875C19.9185 16.4451 19.4451 16.9185 18.875 17.2476C18.3938 17.5254 17.864 17.6417 17.2576 17.6967C16.6693 17.75 15.94 17.75 15.0358 17.75H8.00001C7.58579 17.75 7.25001 17.4142 7.25001 17C7.25001 16.5858 7.58579 16.25 8.00001 16.25H15C15.9484 16.25 16.6096 16.2493 17.1222 16.2028C17.6245 16.1573 17.9101 16.0726 18.125 15.9486C18.4671 15.7511 18.7511 15.467 18.9486 15.125C19.0726 14.9101 19.1573 14.6245 19.2028 14.1222C19.2493 13.6096 19.25 12.9484 19.25 12C19.25 11.0516 19.2493 10.3904 19.2028 9.87779C19.1573 9.37548 19.0726 9.0899 18.9486 8.87499C18.7511 8.53295 18.467 8.24892 18.125 8.05144C17.9101 7.92737 17.6245 7.84271 17.1222 7.79718C16.6096 7.75072 15.9484 7.75 15 7.75H5.81066L7.53033 9.46967C7.82322 9.76256 7.82322 10.2374 7.53033 10.5303C7.23744 10.8232 6.76256 10.8232 6.46967 10.5303L3.46967 7.53033C3.17678 7.23744 3.17678 6.76256 3.46967 6.46967L6.46967 3.46967C6.76256 3.17678 7.23744 3.17678 7.53033 3.46967Z" fill="currentColor"/></svg>
@@ -165,6 +167,16 @@ input,select{font-size:16px}
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M22.5615 5.64099C23.4636 3.04509 20.9861 0.522263 18.3803 1.44085L3.44476 6.70576C0.578346 7.71619 0.500509 11.7624 3.32388 12.8849L3.3397 12.891L8.29288 14.7318C8.75501 14.9178 9.12031 15.2916 9.2978 15.764L11.222 20.6243C12.3084 23.4996 16.3744 23.4454 17.3839 20.5402L22.5615 5.64099ZM18.8789 2.85553C20.2743 2.36365 21.643 3.71458 21.1447 5.14861L15.9671 20.0478C15.4171 21.6302 13.2126 21.6573 12.6238 20.0902L10.6996 15.2299C10.6224 15.0256 10.5257 14.8311 10.4119 14.6487L14.0303 11.0303C14.3232 10.7374 14.3232 10.2626 14.0303 9.96967C13.7374 9.67678 13.2626 9.67678 12.9697 9.96967L9.34872 13.5906C9.18799 13.4915 9.01788 13.4058 8.83985 13.335L8.82404 13.3289L3.87079 11.4881C2.34161 10.8732 2.38813 8.6687 3.94344 8.12043L18.8789 2.85553Z" fill="currentColor"/></svg>
     </button>
   </nav>
+  <div id="geoFlyout" role="toolbar" aria-label="Geometry tools">
+    <button class="tool mode" data-tool="ruler" data-tip="Ruler" aria-label="Ruler" aria-pressed="false">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.6882 4.14229L14.6516 5.10571C14.9445 5.3986 14.9445 5.87348 14.6516 6.16637C14.3588 6.45926 13.8839 6.45926 13.591 6.16637L12.6269 5.20228L11.5662 6.26294L13.2374 7.93414C13.5303 8.22703 13.5303 8.7019 13.2374 8.9948C12.9445 9.28769 12.4697 9.28769 12.1768 8.9948L10.5056 7.3236L9.44492 8.38426L10.409 9.34835C10.7019 9.64124 10.7019 10.1161 10.409 10.409C10.1161 10.7019 9.64124 10.7019 9.34835 10.409L8.38426 9.44492L7.3236 10.5056L8.9948 12.1768C9.28769 12.4697 9.28769 12.9445 8.9948 13.2374C8.7019 13.5303 8.22703 13.5303 7.93414 13.2374L6.26294 11.5662L5.20228 12.6269L6.16637 13.591C6.45926 13.8839 6.45926 14.3588 6.16637 14.6516C5.87348 14.9445 5.3986 14.9445 5.10571 14.6516L4.14229 13.6882C3.67802 14.1568 3.34308 14.5094 3.10761 14.818C2.81761 15.1981 2.75 15.422 2.75 15.6157C2.75 15.8094 2.81762 16.0334 3.10761 16.4135C3.41081 16.8109 3.87892 17.2812 4.5757 17.978L6.022 19.4243C6.71878 20.1211 7.18914 20.5892 7.58653 20.8924C7.96662 21.1824 8.19057 21.25 8.38426 21.25C8.57795 21.25 8.8019 21.1824 9.18198 20.8924C9.57938 20.5892 10.0497 20.1211 10.7465 19.4243L19.4243 10.7465C20.1211 10.0497 20.5892 9.57938 20.8924 9.18198C21.1824 8.8019 21.25 8.57795 21.25 8.38426C21.25 8.19057 21.1824 7.96662 20.8924 7.58653C20.5892 7.18914 20.1211 6.71878 19.4243 6.022L17.978 4.5757C17.2812 3.87892 16.8109 3.41081 16.4135 3.10761C16.0334 2.81762 15.8094 2.75 15.6157 2.75C15.422 2.75 15.1981 2.81761 14.818 3.10761C14.5094 3.34308 14.1568 3.67802 13.6882 4.14229ZM13.9081 1.91508C14.4217 1.52328 14.9622 1.25 15.6157 1.25C16.2693 1.25 16.8098 1.52328 17.3233 1.91508C17.8104 2.28666 18.3514 2.82777 19.0017 3.47812L20.5219 4.99824C21.1722 5.64856 21.7133 6.18964 22.0849 6.67666C22.4767 7.19017 22.75 7.73073 22.75 8.38426C22.75 9.03779 22.4767 9.57834 22.0849 10.0919C21.7133 10.5789 21.1722 11.12 20.5219 11.7703L11.7703 20.5219C11.12 21.1722 10.5789 21.7133 10.0919 22.0849C9.57834 22.4767 9.03779 22.75 8.38426 22.75C7.73073 22.75 7.19017 22.4767 6.67666 22.0849C6.18964 21.7133 5.64856 21.1722 4.99824 20.5219L3.47812 19.0017C2.82777 18.3514 2.28666 17.8104 1.91508 17.3233C1.52328 16.8098 1.25 16.2693 1.25 15.6157C1.25 14.9622 1.52328 14.4217 1.91508 13.9081C2.28667 13.4211 2.82779 12.88 3.47816 12.2297L12.2297 3.47815C12.88 2.82778 13.4211 2.28666 13.9081 1.91508Z" fill="currentColor"/></svg>
+    </button>
+    <button class="tool mode" data-tool="polygon" data-tip="Polygon" aria-label="Polygon" aria-pressed="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M20.5 7.25H20.75C21.8546 7.25 22.75 6.35457 22.75 5.25V3.25C22.75 2.14543 21.8546 1.25 20.75 1.25H18.75C17.6454 1.25 16.75 2.14543 16.75 3.25V3.5H7.25V3.25C7.25 2.14543 6.35457 1.25 5.25 1.25H3.25C2.14543 1.25 1.25 2.14543 1.25 3.25V5.25C1.25 6.35457 2.14543 7.25 3.25 7.25H3.5V16.75H3.25C2.14543 16.75 1.25 17.6454 1.25 18.75V20.75C1.25 21.8546 2.14543 22.75 3.25 22.75H5.25C6.35457 22.75 7.25 21.8546 7.25 20.75V20.5H16.75V20.75C16.75 21.8546 17.6454 22.75 18.75 22.75H20.75C21.8546 22.75 22.75 21.8546 22.75 20.75V18.75C22.75 17.6454 21.8546 16.75 20.75 16.75H20.5V7.25ZM18.75 2.75C18.4739 2.75 18.25 2.97386 18.25 3.25V5.25C18.25 5.52614 18.4739 5.75 18.75 5.75H20.75C21.0261 5.75 21.25 5.52614 21.25 5.25V3.25C21.25 2.97386 21.0261 2.75 20.75 2.75H18.75ZM19 7.25H18.75C17.6454 7.25 16.75 6.35457 16.75 5.25V5H7.25V5.25C7.25 6.35457 6.35457 7.25 5.25 7.25H5V16.75H5.25C6.35457 16.75 7.25 17.6454 7.25 18.75V19H16.75V18.75C16.75 17.6454 17.6454 16.75 18.75 16.75H19V7.25ZM18.75 18.25C18.4739 18.25 18.25 18.4739 18.25 18.75V20.75C18.25 21.0261 18.4739 21.25 18.75 21.25H20.75C21.0261 21.25 21.25 21.0261 21.25 20.75V18.75C21.25 18.4739 21.0261 18.25 20.75 18.25H18.75ZM5.75 3.25C5.75 2.97386 5.52614 2.75 5.25 2.75H3.25C2.97386 2.75 2.75 2.97386 2.75 3.25V5.25C2.75 5.52614 2.97386 5.75 3.25 5.75H5.25C5.52614 5.75 5.75 5.52614 5.75 5.25V3.25ZM5.75 18.75C5.75 18.4739 5.52614 18.25 5.25 18.25H3.25C2.97386 18.25 2.75 18.4739 2.75 18.75V20.75C2.75 21.0261 2.97386 21.25 3.25 21.25H5.25C5.52614 21.25 5.75 21.0261 5.75 20.75V18.75Z" fill="currentColor"/></svg></button>
+    <button class="tool mode" data-tool="compass" data-tip="Compass" aria-label="Compass" aria-pressed="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path d="M 12 2 V 3.6667" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path> <path d="M 10.7266 8.676 L 3.6667 21.6666" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path> <path d="M 18.3702 18.054 L 20.3333 21.6666" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path> <path d="M 13.2733 8.676 L 16.4573 14.5346" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path> <path d="M 12 9 C 13.4728 9 14.6666 7.8066 14.6666 6.3333 C 14.6666 4.86 13.4728 3.6667 12 3.6667 C 10.5272 3.6667 9.3333 4.86 9.3333 6.3333 C 9.3333 7.8066 10.5272 9 12 9 Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path> <path d="M 18.6666 12.8653 C 16.972 14.5946 14.612 15.6666 12 15.6666 C 9.388 15.6666 7.0266 14.5933 5.3333 12.8653" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></path></svg></button>
+    <button class="tool mode" data-tool="centre" data-tip="Centreline" aria-label="Centreline" aria-pressed="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path d="M20.75 12C20.75 12.4142 20.4142 12.75 20 12.75H4C3.58579 12.75 3.25 12.4142 3.25 12C3.25 11.5858 3.58579 11.25 4 11.25H20C20.4142 11.25 20.75 11.5858 20.75 12Z" fill="currentColor"/></svg></button>
+    <button class="tool mode" data-tool="angle" data-tip="Angle" aria-label="Angle" aria-pressed="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.46997 13.26L12 9.73999L15.53 13.26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="tool mode" data-tool="hatch" data-tip="Hatch" aria-label="Hatch" aria-pressed="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.7226 3.20068C10.8335 2.80158 10.5998 2.38817 10.2007 2.27731C9.80163 2.16645 9.38822 2.40011 9.27736 2.79921L7.76327 8.24995H4C3.58579 8.24995 3.25 8.58573 3.25 8.99995C3.25 9.41416 3.58579 9.74995 4 9.74995H7.3466L5.81882 15.2499H2C1.58579 15.2499 1.25 15.5857 1.25 15.9999C1.25 16.4142 1.58579 16.7499 2 16.7499H5.40216L4.27736 20.7992C4.1665 21.1983 4.40016 21.6117 4.79927 21.7226C5.19837 21.8334 5.61178 21.5998 5.72264 21.2007L6.95895 16.7499H14.4022L13.2774 20.7992C13.1665 21.1983 13.4002 21.6117 13.7993 21.7226C14.1984 21.8334 14.6118 21.5998 14.7226 21.2007L15.959 16.7499H20C20.4142 16.7499 20.75 16.4142 20.75 15.9999C20.75 15.5857 20.4142 15.2499 20 15.2499H16.3756L17.9034 9.74995H22C22.4142 9.74995 22.75 9.41416 22.75 8.99995C22.75 8.58573 22.4142 8.24995 22 8.24995H18.3201L19.7226 3.20068C19.8335 2.80158 19.5998 2.38817 19.2007 2.27731C18.8016 2.16645 18.3882 2.40011 18.2774 2.79921L16.7633 8.24995H9.32006L10.7226 3.20068ZM14.8188 15.2499L16.3466 9.74995H8.9034L7.37562 15.2499H14.8188Z" fill="currentColor"/></svg></button>
+  </div>
 
   <div id="settings">
     <button id="settingsBtn" aria-label="Canvas settings" aria-expanded="false" aria-controls="settingsMenu">
@@ -211,6 +223,7 @@ input,select{font-size:16px}
   const notice = $('notice'), sentBadge = $('sentBadge'), toastEl = $('toast');
   const titleBtn = $('titleBtn'), titlePanel = $('titlePanel'), fieldList = $('fieldList');
   const settingsBtn = $('settingsBtn'), settingsMenu = $('settingsMenu');
+  const geoBtn = $('geoBtn'), geoFlyout = $('geoFlyout');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const ERASE_R = 14;                 // eraser circle radius, CSS px
 
@@ -221,6 +234,9 @@ input,select{font-size:16px}
   let dimFirst = null, dimPreview = null;
   let grid = true, snap = true, connected = false, sending = false;
   let drawingNo = 1, fields = [], titleOpen = false, toastTimer, sentTimer;
+  let poly = null, polyLastTap = 0;   // polygon in progress: {pts:[{x,y}]}
+  let compassCentre = null;           // compass centre once tapped
+  let angleTaps = [];                 // angle tool: vertex, then the two arm ends
 
   // ---------- geometry helpers ----------
   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -330,9 +346,10 @@ input,select{font-size:16px}
     ctx.fillStyle = '#FBFBF7'; ctx.fillRect(x - w / 2, y - 10, w, 20);
     ctx.fillStyle = '#2563EB'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x, y);
   }
-  function drawPolyline(pts, color = '#1F2A36', fixed = null) {
+  function drawPolyline(pts, color = '#1F2A36', fixed = null, dash = false) {
     if (!pts || !pts.length) return;
     ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (dash) ctx.setLineDash([12, 4, 3, 4]);
     if (pts.length === 1) { ctx.beginPath(); ctx.arc(pts[0].x, pts[0].y, 1, 0, Math.PI * 2); ctx.fill(); }
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1], b = pts[i];
@@ -360,16 +377,37 @@ input,select{font-size:16px}
     ctx.restore();
   }
   function drawContent(transient) {
-    for (const s of strokes) drawPolyline(s.points);
+    for (const s of strokes) {
+      drawPolyline(s.points, '#1F2A36', null, !!s.dash);
+      if (s.label) label(s.label.text, s.label.x, s.label.y);
+    }
     dimensions.forEach(drawDimension);
     if (!transient) return;
     if (gesture) {
       if (gesture.tool === 'pen') drawPolyline(gesture.points);
       else if (['line', 'rect', 'circle'].includes(gesture.tool)) { const s = shapeFor(gesture.tool, gesture.start, gesture.cur); if (s) drawPolyline(s.points); }
+      else if (gesture.tool === 'centre') drawPolyline([gesture.start, gesture.cur], '#1F2A36', null, true);
+      else if (gesture.tool === 'compass' && compassCentre) drawPolyline(arcPoints(compassCentre, gesture.start, gesture.cur).points);
       else if (gesture.tool === 'ruler') drawRuler(gesture.start, gesture.cur);
     }
     if (ruler) drawRuler(ruler.a, ruler.b);
+    if (poly) {
+      const pts = pointerPos ? [...poly.pts, pointerPos] : poly.pts;
+      drawPolyline(pts, '#1F2A36', 1.5);
+      if (poly.pts.length >= 3) {
+        const f = poly.pts[0];
+        ctx.save(); ctx.strokeStyle = '#2563EB'; ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.arc(f.x, f.y, 20, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      }
+    }
     if (dimFirst) { ctx.save(); ctx.strokeStyle = '#2563EB'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(dimFirst.x - 8, dimFirst.y); ctx.lineTo(dimFirst.x + 8, dimFirst.y); ctx.moveTo(dimFirst.x, dimFirst.y - 8); ctx.lineTo(dimFirst.x, dimFirst.y + 8); ctx.stroke(); ctx.restore(); }
+    if (angleTaps.length) drawPolyline(pointerPos ? [...angleTaps, pointerPos] : angleTaps, '#1F2A36', 1.5);
+    if (compassCentre) {
+      const c = compassCentre;
+      ctx.save(); ctx.strokeStyle = '#2563EB'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(c.x - 6, c.y); ctx.lineTo(c.x + 6, c.y); ctx.moveTo(c.x, c.y - 6); ctx.lineTo(c.x, c.y + 6); ctx.stroke();
+      ctx.restore();
+    }
     if (dimPreview) drawDimension({ a: dimFirst, b: dimPreview });
   }
   function render() {
@@ -420,24 +458,141 @@ input,select{font-size:16px}
   }
   function setTool(next) {
     if (['undo', 'redo', 'clear', 'send'].includes(next)) { act(next); return; }
-    tool = next; gesture = null; dimFirst = null; dimPreview = null; ruler = null; pointerPos = null;
-    toolbar.querySelectorAll('.mode').forEach(b => {
+    tool = next; gesture = null; dimFirst = null; dimPreview = null; ruler = null; pointerPos = null; poly = null; compassCentre = null; angleTaps = [];
+    document.querySelectorAll('.mode').forEach(b => {
       const on = b.dataset.tool === tool;
       b.classList.toggle('selected', on); b.setAttribute('aria-pressed', String(on));
     });
+    geoBtn.classList.toggle('selected', !!geoFlyout.querySelector(`[data-tool="${tool}"]`));
+    closeGeo();
     render();
+  }
+
+  // Compass arc: centre is set by a tap; a drag starts on the radius and its end sets the sweep.
+  function arcPoints(c, start, cur) {
+    const r = dist(c, start), a0 = Math.atan2(start.y - c.y, start.x - c.x);
+    let sweep = Math.atan2(cur.y - c.y, cur.x - c.x) - a0;
+    while (sweep > Math.PI) sweep -= 2 * Math.PI;
+    while (sweep < -Math.PI) sweep += 2 * Math.PI;
+    const n = Math.max(8, Math.ceil(Math.abs(sweep) * r / 4));
+    const pts = Array.from({ length: n + 1 }, (_, i) => {
+      const a = a0 + sweep * i / n;
+      return { x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a), p: .5 };
+    });
+    return { points: pts, shape: { kind: 'arc', cx: c.x, cy: c.y, r, a0, sweep } };
+  }
+
+  // Hatch: tap inside a closed shape to fill it with 45-degree section lines spaced 8 px apart.
+  const HATCH_GAP = 8;
+  function closedPts(s) {
+    const pts = s.points;
+    return pts.length >= 3 && dist(pts[0], pts[pts.length - 1]) < 3 ? pts : null;
+  }
+  function insidePoly(p, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[i], b = pts[j];
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+  }
+  function hatchSegments(pts) {
+    const xs = pts.map(q => q.x), ys = pts.map(q => q.y);
+    const cMin = Math.min(...xs) - Math.max(...ys), cMax = Math.max(...xs) - Math.min(...ys);
+    const step = HATCH_GAP * Math.SQRT2;   // lines x - y = c; this spacing gives HATCH_GAP between lines
+    const out = [];
+    for (let c = cMin; c <= cMax; c += step) {
+      const hits = [];
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const fa = a.x - a.y - c, fb = b.x - b.y - c;
+        if ((fa > 0) === (fb > 0)) continue;
+        const t = fa / (fa - fb);
+        hits.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+      hits.sort((m, n) => m.x - n.x);
+      for (let k = 0; k + 1 < hits.length; k += 2) {
+        out.push({ points: [{ x: hits[k].x, y: hits[k].y, p: .5 }, { x: hits[k + 1].x, y: hits[k + 1].y, p: .5 }], hatch: true });
+      }
+    }
+    return out;
+  }
+  function hatchTap(p) {
+    let host = null;
+    for (let i = strokes.length - 1; i >= 0 && !host; i--) {
+      const pts = closedPts(strokes[i]);
+      if (pts && insidePoly(p, pts)) host = pts;
+    }
+    if (!host) { showToast('Tap inside a closed shape'); return; }
+    const segs = hatchSegments(host);
+    if (segs.length) { change(() => strokes.push(...segs)); showToast('Hatched'); }
+  }
+
+  // Angle: tap the vertex, then one point on each arm. Draws both arms, an arc and the angle in degrees.
+  function angleTap(p) {
+    angleTaps.push(p);
+    if (angleTaps.length < 3) { showToast(angleTaps.length === 1 ? 'Tap the first arm end' : 'Tap the second arm end'); return; }
+    const [v, a, b] = angleTaps; angleTaps = [];
+    const u = { x: a.x - v.x, y: a.y - v.y }, w = { x: b.x - v.x, y: b.y - v.y };
+    const lu = Math.hypot(u.x, u.y), lw = Math.hypot(w.x, w.y);
+    if (!lu || !lw) return;
+    const deg = Math.acos(Math.max(-1, Math.min(1, (u.x * w.x + u.y * w.y) / (lu * lw)))) * 180 / Math.PI;
+    const r = Math.min(40, lu * .5, lw * .5);
+    const a0 = Math.atan2(u.y, u.x);
+    let sweep = Math.atan2(w.y, w.x) - a0;
+    while (sweep > Math.PI) sweep -= 2 * Math.PI;
+    while (sweep < -Math.PI) sweep += 2 * Math.PI;
+    const n = Math.max(8, Math.ceil(Math.abs(sweep) * r / 3));
+    const arc = Array.from({ length: n + 1 }, (_, i) => {
+      const t = a0 + sweep * i / n;
+      return { x: v.x + r * Math.cos(t), y: v.y + r * Math.sin(t), p: .5 };
+    });
+    const mid = a0 + sweep / 2;
+    const text = Math.round(deg) + '°';
+    const at = { x: v.x + (r + 14) * Math.cos(mid), y: v.y + (r + 14) * Math.sin(mid) };
+    change(() => strokes.push(
+      { points: [{ x: v.x, y: v.y, p: .5 }, { x: a.x, y: a.y, p: .5 }], shape: { kind: 'line', a: { x: v.x, y: v.y }, b: { x: a.x, y: a.y } } },
+      { points: [{ x: v.x, y: v.y, p: .5 }, { x: b.x, y: b.y, p: .5 }], shape: { kind: 'line', a: { x: v.x, y: v.y }, b: { x: b.x, y: b.y } } },
+      { points: arc, shape: { kind: 'arc' }, label: { x: at.x, y: at.y, text } }
+    ));
+  }
+
+  // Polygon: each tap adds a corner. Tap the first corner (3+ corners) to close the shape.
+  // Double-tap the last corner to leave the shape open.
+  function polygonTap(p) {
+    const now = performance.now();
+    if (!poly) { poly = { pts: [p] }; polyLastTap = now; showToast('Tap the first corner to close'); return; }
+    const first = poly.pts[0], last = poly.pts[poly.pts.length - 1];
+    if (poly.pts.length >= 3 && dist(p, first) < 20) {
+      const pts = [...poly.pts, first].map(q => ({ x: q.x, y: q.y, p: .5 }));
+      poly = null;
+      change(() => strokes.push({ points: pts, shape: { kind: 'polygon', closed: true } }));
+      return;
+    }
+    if (now - polyLastTap < 350 && dist(p, last) < 12) {
+      const pts = poly.pts.map(q => ({ x: q.x, y: q.y, p: .5 }));
+      poly = null;
+      if (pts.length >= 2) change(() => strokes.push({ points: pts, shape: { kind: 'polygon', closed: false } }));
+      return;
+    }
+    poly.pts.push(p); polyLastTap = now;
   }
 
   canvas.addEventListener('pointerdown', e => {
     if (!isInk(e) || modalOpen()) return;
     e.preventDefault(); canvas.setPointerCapture(e.pointerId);
     settingsMenu.classList.remove('open'); settingsBtn.setAttribute('aria-expanded', 'false');
+    closeGeo();
     const p = point(e); pointerPos = p; ruler = null;
     if (tool === 'dimension') {
       if (!dimFirst) { dimFirst = p; showToast('Choose second point'); }
       else { dimPreview = p; openDimension(p); }
       render(); return;
     }
+    if (tool === 'polygon') { polygonTap(p); render(); return; }
+    if (tool === 'angle') { angleTap(p); render(); return; }
+    if (tool === 'hatch') { hatchTap(p); render(); return; }
+    if (tool === 'compass' && !compassCentre) { compassCentre = p; showToast('Drag from the edge to sweep an arc'); render(); return; }
     if (tool === 'eraser') { gesture = { tool, pre: snapshot(), changed: false }; eraseAt(p); render(); return; }
     gesture = { tool, start: p, cur: p, points: [p] };
     render();
@@ -452,7 +607,7 @@ input,select{font-size:16px}
       else gesture.cur = p;
       render();
     } else if (dimFirst && tool === 'dimension') { dimPreview = p; render(); }
-    else if (tool === 'eraser') render();
+    else if (tool === 'eraser' || poly || angleTaps.length) render();
   });
   function endGesture() {
     if (!gesture) return;
@@ -463,6 +618,14 @@ input,select{font-size:16px}
     } else if (['line', 'rect', 'circle'].includes(g.tool)) {
       const s = shapeFor(g.tool, g.start, g.cur);
       if (s) change(() => strokes.push(s));
+    } else if (g.tool === 'centre') {
+      const s = shapeFor('line', g.start, g.cur);
+      if (s) change(() => strokes.push({ ...s, dash: true }));
+    } else if (g.tool === 'compass') {
+      if (compassCentre && dist(g.start, compassCentre) >= 4 && dist(g.start, g.cur) >= 4) {
+        const s = arcPoints(compassCentre, g.start, g.cur);
+        change(() => strokes.push(s));
+      }
     } else if (g.tool === 'ruler') {
       if (dist(g.start, g.cur) >= 4) ruler = { a: g.start, b: g.cur };
     } else if (g.tool === 'eraser' && g.changed) {
@@ -504,7 +667,12 @@ input,select{font-size:16px}
     if (!strokes.length && !dimensions.length) return;
     change(() => { strokes = []; dimensions = []; });
   };
-  toolbar.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  function closeGeo() { geoFlyout.classList.remove('open'); geoBtn.setAttribute('aria-expanded', 'false'); }
+  geoBtn.onclick = () => {
+    const open = geoFlyout.classList.toggle('open');
+    geoBtn.setAttribute('aria-expanded', String(open));
+  };
 
   // ---------- settings and title block ----------
   settingsBtn.onclick = () => {
@@ -603,7 +771,7 @@ input,select{font-size:16px}
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       overlay.classList.remove('open'); closeDimension();
-      settingsMenu.classList.remove('open'); setTitleOpen(false);
+      settingsMenu.classList.remove('open'); setTitleOpen(false); closeGeo(); poly = null; compassCentre = null; angleTaps = [];
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); act(e.shiftKey ? 'redo' : 'undo'); }
   });
