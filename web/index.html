@@ -85,6 +85,7 @@ body{user-select:none;-webkit-user-select:none}
  #settings{right:calc(12px + var(--safe-right));top:calc(56px + var(--safe-top))}
  #hint{top:calc(14px + var(--safe-top));font-size:12px}
 }
+@keyframes spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
@@ -327,7 +328,6 @@ body{user-select:none;-webkit-user-select:none}
     if(e.key==='Escape'){overlay.classList.remove('open');closeDimension();document.getElementById('settingsMenu').classList.remove('open')}
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();act(e.shiftKey?'redo':'undo')}
   });
-  const style=document.createElement('style');style.textContent='@keyframes spin{to{transform:rotate(360deg)}}';document.head.appendChild(style);
   window.addEventListener('resize',resize);resize();updateUndo();updateConnection();
 })();
 </script>
