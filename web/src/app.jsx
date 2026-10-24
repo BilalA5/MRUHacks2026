@@ -81,6 +81,72 @@ function toDxf(elements) {
   return ["0", "SECTION", "2", "ENTITIES", ...out, "0", "ENDSEC", "0", "EOF", ""].join("\n");
 }
 
+// ---- Hold to snap: a pen stroke held still at its end becomes a clean line, circle or rectangle. ----
+const HOLD_MS = 450;    // how long the pen must stay still before lifting
+const HOLD_MOVE = 8;    // screen px the pen may drift and still count as still
+
+// Returns {name, skeleton} for a line, circle or rectangle, or null if the stroke is none of these.
+function recogniseStroke(pts) {
+  const a = pts[0], b = pts[pts.length - 1];
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = maxX - minX, h = maxY - minY, size = Math.max(w, h);
+  const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+  if (size < 20) return null;
+  const len = dist(a, b);
+  const segDev = p => {
+    const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  };
+  if (len >= 0.7 * size && Math.max(...pts.map(segDev)) <= 6) {
+    return { name: "line", skeleton: { type: "line", x: a.x, y: a.y, points: [[0, 0], [b.x - a.x, b.y - a.y]] } };
+  }
+  if (len <= 0.25 * size) {
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    if (Math.min(w, h) / Math.max(w, h) >= 0.77) {          // closer to round than 1.3 : 1
+      const r = (w + h) / 4;
+      if (pts.every(p => Math.abs(dist(p, { x: cx, y: cy }) - r) <= 0.15 * r)) {
+        return { name: "circle", skeleton: { type: "ellipse", x: cx - r, y: cy - r, width: 2 * r, height: 2 * r } };
+      }
+    }
+    const tol = 0.12 * Math.min(w, h);
+    const near = pts.filter(p => Math.min(Math.abs(p.x - minX), Math.abs(p.x - maxX), Math.abs(p.y - minY), Math.abs(p.y - maxY)) <= tol).length;
+    if (w >= 20 && h >= 20 && Math.max(w, h) / Math.min(w, h) <= 4 && near / pts.length >= 0.85) {
+      return { name: "rectangle", skeleton: { type: "rectangle", x: minX, y: minY, width: w, height: h } };
+    }
+  }
+  return null;
+}
+
+// Replaces a freehand stroke with the recognised shape, keeping its colour and stroke width.
+function snapStroke(api, el, flash) {
+  const pts = el.points.map(([px, py]) => ({ x: el.x + px, y: el.y + py }));
+  const found = recogniseStroke(pts);
+  if (!found) return flash("Held stroke is not a line, circle or rectangle", "warn");
+  const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth, strokeStyle: el.strokeStyle };
+  const replacement = convertToExcalidrawElements([{ ...found.skeleton, ...style }]);
+  api.updateScene({ elements: [...api.getSceneElements().filter(e => e.id !== el.id), ...replacement] });
+  flash(`Snapped to ${found.name}`);
+}
+
+// Mark profile: a closed shape with a depth in mm. This is the outline a Part is extruded from.
+function markProfile(api, flash, depthMm) {
+  const shapes = selectedOfType(api, ["rectangle", "ellipse", "diamond"]);
+  if (!shapes.length) return flash("Select a closed shape (rectangle, circle or diamond) first", "warn");
+  const ids = new Set(shapes.map(s => s.id));
+  const labels = shapes.map(s => ({ type: "text", x: s.x, y: s.y - 22, text: `Profile · ${depthMm} mm`, fontSize: 14, strokeColor: BLUE }));
+  api.updateScene({
+    elements: [
+      ...api.getSceneElements().map(el => ids.has(el.id)
+        ? { ...el, customData: { ...(el.customData || {}), profile: true, depthMm }, version: el.version + 1, versionNonce: rnd() }
+        : el),
+      ...convertToExcalidrawElements(labels),
+    ],
+  });
+  flash(`Profile marked, ${depthMm} mm deep`);
+}
+
 // ---- Tools. Each one reports what it did, or why it could not run. ----
 
 function centreLine(api, flash) {
@@ -89,22 +155,6 @@ function centreLine(api, flash) {
     { type: "line", x: c.x - 200, y: c.y, points: [[0, 0], [400, 0]], strokeStyle: "dashed", strokeColor: BLUE, strokeWidth: 1 },
   ])] });
   flash("Centre line added");
-}
-
-// Centre mark: a small cross at the centre of each selected circle or rectangle.
-function centreMark(api, flash) {
-  const shapes = selectedOfType(api, ["ellipse", "rectangle"]);
-  if (!shapes.length) return flash("Select a circle or rectangle first", "warn");
-  const els = [];
-  for (const el of shapes) {
-    const cx = el.x + el.width / 2, cy = el.y + el.height / 2;
-    els.push(...convertToExcalidrawElements([
-      { type: "line", x: cx - 12, y: cy, points: [[0, 0], [24, 0]], strokeColor: BLUE, strokeWidth: 1 },
-      { type: "line", x: cx, y: cy - 12, points: [[0, 0], [0, 24]], strokeColor: BLUE, strokeWidth: 1 },
-    ]));
-  }
-  api.updateScene({ elements: [...api.getSceneElements(), ...els] });
-  flash(`Centre mark on ${shapes.length} shape${shapes.length > 1 ? "s" : ""}`);
 }
 
 // Mirror: reflect the selected lines, arrows, rectangles and ellipses across the selected dashed centre line.
@@ -256,7 +306,6 @@ function exportDxf(api, flash) {
 const SECTIONS = [
   { title: "Lines", items: [
     { label: "Centre line", icon: "Minus", run: centreLine },
-    { label: "Centre mark", icon: "Plus", run: centreMark },
     { label: "Mirror", icon: "Mirror", run: mirror },
   ] },
   { title: "Dimensions", items: [
@@ -267,6 +316,9 @@ const SECTIONS = [
     { label: "Hatch", icon: "Hashtag", run: hatch },
     { label: "Constrain", icon: "VectorSquare", run: constrain },
     { label: "Offset", icon: "Squares", run: offset },
+  ] },
+  { title: "Part", items: [
+    { label: "Mark profile", icon: "Layers", run: "profile" },
   ] },
   { title: "Sheet", items: [
     { label: "Snap grid", icon: "Grid", run: toggleGrid, toggle: true },
@@ -279,6 +331,60 @@ function App() {
   const [gridOn, setGridOn] = useState(true);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [depth, setDepth] = useState("10");
+  const seenStrokes = useRef(new Set());   // freedraw ids already seen in onChange
+  const activeStroke = useRef(null);       // the freedraw stroke being drawn now
+  const holdPending = useRef(false);       // set when a pen lifts after being still
+  const pressAt = useRef(null);            // where and when the current pen press went still
+
+  // Hold to snap: note when the pen went still, and whether it was still when it lifted.
+  useEffect(() => {
+    const root = document.querySelector(".board");
+    if (!api || !root) return;
+    const down = e => {
+      if (api.getAppState().activeTool.type !== "freedraw") { pressAt.current = null; return; }
+      pressAt.current = { x: e.clientX, y: e.clientY, still: performance.now() };
+    };
+    const move = e => {
+      const p = pressAt.current;
+      if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > HOLD_MOVE) { p.x = e.clientX; p.y = e.clientY; p.still = performance.now(); }
+    };
+    const up = () => {
+      const p = pressAt.current;
+      pressAt.current = null;
+      if (p && performance.now() - p.still >= HOLD_MS) holdPending.current = true;
+    };
+    root.addEventListener("pointerdown", down, true);
+    root.addEventListener("pointermove", move, true);
+    root.addEventListener("pointerup", up, true);
+    return () => {
+      root.removeEventListener("pointerdown", down, true);
+      root.removeEventListener("pointermove", move, true);
+      root.removeEventListener("pointerup", up, true);
+    };
+  }, [api]);
+
+  // Every board change: remember the newest pen stroke, and snap it if it was held still.
+  const handleChange = (elements, appState) => {
+    setGridOn(!!appState.gridModeEnabled);
+    const strokes = elements.filter(e => e.type === "freedraw" && !e.isDeleted);
+    const fresh = strokes.filter(e => !seenStrokes.current.has(e.id));
+    seenStrokes.current = new Set(strokes.map(e => e.id));
+    if (fresh.length) activeStroke.current = fresh[fresh.length - 1].id;
+    if (holdPending.current) {
+      holdPending.current = false;
+      const el = elements.find(e => e.id === activeStroke.current && e.type === "freedraw" && !e.isDeleted);
+      if (el) snapStroke(api, el, flash);
+    }
+  };
+
+  const confirmProfile = () => {
+    const d = parseFloat(depth);
+    if (!(d > 0)) return flash("Enter a depth above 0 mm", "warn");
+    setProfileOpen(false);
+    markProfile(api, flash, d);
+  };
 
   // Debug handle: lets the browser console inspect and drive the board.
   useEffect(() => { window.board = api; }, [api]);
@@ -292,6 +398,10 @@ function App() {
 
   const run = (item) => {
     if (!api) return;
+    if (item.run === "profile") {
+      if (!selectedOfType(api, ["rectangle", "ellipse", "diamond"]).length) return flash("Select a closed shape (rectangle, circle or diamond) first", "warn");
+      return setProfileOpen(true);
+    }
     item.run(api, flash);
   };
 
@@ -308,9 +418,10 @@ function App() {
             currentItemStrokeWidth: 1.5,
             currentItemRoughness: 0,
             currentItemFontFamily: 2,
+            penMode: true,          // palm rejection: with pen mode on, a resting hand does not draw
           },
         }}
-        onChange={(_, appState) => setGridOn(!!appState.gridModeEnabled)}
+        onChange={handleChange}
         UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false, changeViewBackgroundColor: false, clearCanvas: true } }}
       />
       <aside className="eng-side" aria-label="Engineering tools">
@@ -334,6 +445,21 @@ function App() {
           </section>
         ))}
       </aside>
+      {profileOpen && (
+        <div className="eng-dialog-wrap" onClick={() => setProfileOpen(false)}>
+          <form className="eng-dialog" role="dialog" aria-label="Mark profile" onClick={e => e.stopPropagation()}
+            onSubmit={e => { e.preventDefault(); confirmProfile(); }}>
+            <h2>Profile depth</h2>
+            <label>Depth (mm)
+              <input type="number" min="0" step="any" value={depth} autoFocus onChange={e => setDepth(e.target.value)} />
+            </label>
+            <div className="eng-dialog-actions">
+              <button type="button" onClick={() => setProfileOpen(false)}>Cancel</button>
+              <button type="submit" className="primary">Mark</button>
+            </div>
+          </form>
+        </div>
+      )}
       {toast && <div key={toast.id} className={"eng-toast " + toast.kind} role="status" aria-live="polite">{toast.text}</div>}
     </div>
   );
