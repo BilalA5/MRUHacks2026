@@ -171,7 +171,7 @@ input,select{font-size:16px}
     </button>
     <div id="settingsMenu">
       <label class="setting">Show grid <input id="gridToggle" type="checkbox" checked></label>
-      <label class="setting">Snap shapes <input id="snapToggle" type="checkbox" checked></label>
+      <label class="setting">Hold to snap <input id="snapToggle" type="checkbox" checked></label>
     </div>
   </div>
     </div>
@@ -312,15 +312,43 @@ input,select{font-size:16px}
     for (const q of points) if (Math.abs(dist(q, { x: cx, y: cy }) - r) > .15 * r) return null;
     return { points: ring(cx, cy, r), shape: { kind: 'circle', cx, cy, r } };
   }
-  function finishPen(points) {
-    if (points.length < 2) return { points };
-    if (snap) {
-      const line = straightLine(points);
-      if (line) { showToast('Line'); return line; }
-      const circle = closedCircle(points);
-      if (circle) { showToast('Circle'); return circle; }
-    }
-    return { points };
+  // Rectangle: most of a closed loop sits near the edges of its bounding box.
+  function rectFit(points) {
+    const xs = points.map(p => p.x), ys = points.map(p => p.y);
+    const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+    if (w < 24 || h < 24 || Math.max(w, h) / Math.min(w, h) > 4) return null;
+    if (dist(points[0], points[points.length - 1]) > .25 * Math.max(w, h)) return null;
+    const tol = .12 * Math.min(w, h);
+    const near = points.filter(q => Math.min(Math.abs(q.x - x), Math.abs(q.x - x - w), Math.abs(q.y - y), Math.abs(q.y - y - h)) <= tol).length;
+    if (near / points.length < .85) return null;
+    const corners = [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }, { x, y }].map(q => ({ ...q, p: .5 }));
+    return { points: corners, shape: { kind: 'rect', x, y, w, h } };
+  }
+  // What a held stroke should become: a line, a circle or a rectangle. Null if it is none of these.
+  function recognise(points) {
+    return straightLine(points) || closedCircle(points) || rectFit(points);
+  }
+  // Line end follows the pen and snaps to 15-degree steps while held.
+  function snapEnd(a, p) {
+    const len = dist(a, p), ang = Math.atan2(p.y - a.y, p.x - a.x), step = Math.PI / 12;
+    const near = Math.round(ang / step) * step;
+    const use = Math.abs(ang - near) < 3 * Math.PI / 180 ? near : ang;
+    return { x: a.x + Math.cos(use) * len, y: a.y + Math.sin(use) * len, p: p.p };
+  }
+  // Hold to snap: keep the pen still for HOLD_MS after drawing and the stroke becomes a clean shape.
+  const HOLD_MS = 450, HOLD_MOVE = 6;
+  function armHold() {
+    if (!gesture || gesture.tool !== 'pen' || gesture.held) return;
+    clearTimeout(gesture.holdTimer);
+    gesture.holdTimer = setTimeout(holdFired, HOLD_MS);
+  }
+  function holdFired() {
+    if (!snap || !gesture || gesture.tool !== 'pen' || gesture.held) return;
+    const rec = recognise(gesture.points);
+    if (!rec) return;
+    gesture.held = { ...rec, heldAt: performance.now() };
+    showToast({ line: 'Line', circle: 'Circle', rect: 'Rectangle' }[rec.shape.kind]);
+    requestRender();
   }
   // Shape tools: drag from a start point to a current point.
   function shapeFor(kind, a, b) {
@@ -430,7 +458,16 @@ input,select{font-size:16px}
   // Only what is live on screen: the stroke being drawn, previews and pending taps.
   function drawContent() {
     if (gesture) {
-      if (gesture.tool === 'pen') drawPolyline(gesture.points, MARKERS[marker].color, MARKERS[marker].w, false, MARKERS[marker].alpha);
+      if (gesture.tool === 'pen') {
+        const st = MARKERS[marker];
+        if (gesture.held) {
+          // Cross-fade from the freehand stroke into the clean shape over 120 ms, ease-out.
+          const t = Math.min(1, (performance.now() - gesture.held.heldAt) / 120), k = 1 - Math.pow(1 - t, 3);
+          if (t < 1) requestRender();
+          drawPolyline(gesture.points, st.color, st.w, false, st.alpha * (1 - k));
+          drawPolyline(gesture.held.points, st.color, st.w, false, st.alpha * k);
+        } else drawPolyline(gesture.points, st.color, st.w, false, st.alpha);
+      }
       else if (['line', 'rect', 'circle'].includes(gesture.tool)) { const s = shapeFor(gesture.tool, gesture.start, gesture.cur); if (s) drawPolyline(s.points); }
       else if (gesture.tool === 'centre') drawPolyline([gesture.start, gesture.cur], '#1F2A36', null, true);
       else if (gesture.tool === 'arrow') {
@@ -653,7 +690,8 @@ input,select{font-size:16px}
     if (tool === 'hatch') { hatchTap(p); render(); return; }
     if (tool === 'compass' && !compassCentre) { compassCentre = p; showToast('Drag from the edge to sweep an arc'); render(); return; }
     if (tool === 'eraser') { gesture = { tool, pre: snapshot(), changed: false }; eraseAt(p); render(); return; }
-    gesture = { tool, start: p, cur: p, points: [p] };
+    gesture = { tool, start: p, cur: p, points: [p], anchor: p };
+    if (tool === 'pen') armHold();
     render();
   });
   // Redraw at most once per frame, however many pointer events arrive.
@@ -670,7 +708,19 @@ input,select{font-size:16px}
       e.preventDefault();
       if (gesture.tool === 'eraser') eraseAt(p);
       // The Pencil reports samples between frames; keep every one so fast writing is not flattened.
-      else if (gesture.tool === 'pen') for (const ev of (e.getCoalescedEvents ? e.getCoalescedEvents() : [e])) gesture.points.push(point(ev));
+      else if (gesture.tool === 'pen') {
+        if (gesture.held) {
+          // A held line keeps following the pen; a held circle or rectangle stays as it was recognised.
+          if (gesture.held.shape.kind === 'line') {
+            gesture.held.shape.b = snapEnd(gesture.held.shape.a, p);
+            gesture.held.points = [gesture.held.shape.a, gesture.held.shape.b];
+          }
+        } else {
+          const samples = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+          for (const ev of (samples.length ? samples : [e])) gesture.points.push(point(ev));
+          if (dist(p, gesture.anchor) > HOLD_MOVE) { gesture.anchor = p; armHold(); }
+        }
+      }
       else gesture.cur = p;
       requestRender();
     } else if (dimFirst && tool === 'dimension') { dimPreview = p; requestRender(); }
@@ -680,7 +730,9 @@ input,select{font-size:16px}
     if (!gesture) return;
     const g = gesture; gesture = null; pointerPos = null;
     if (g.tool === 'pen') {
-      const s = { ...finishPen(g.points), style: { ...MARKERS[marker] } };
+      clearTimeout(g.holdTimer);
+      const s = { points: g.held ? g.held.points : g.points, style: { ...MARKERS[marker] } };
+      if (g.held) s.shape = g.held.shape;
       change(() => strokes.push(s));
     } else if (['line', 'rect', 'circle'].includes(g.tool)) {
       const s = shapeFor(g.tool, g.start, g.cur);
