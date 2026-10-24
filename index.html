@@ -118,3 +118,21 @@ body{user-select:none;-webkit-user-select:none}
       <svg id="sendIcon" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>
     </button>
   </div>
+  <div id="settings">
+    <button id="settingsBtn" aria-label="Canvas settings" aria-expanded="false">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.7-1.4-2.4L7.3 15a8 8 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.7 1.4 2.4-1.4 1.1a8 8 0 0 1-.1 2Z"/></svg>
+    </button>
+    <div id="settingsMenu">
+      <label class="setting">Show grid <input id="gridToggle" type="checkbox" checked></label>
+      <label class="setting">Snap shapes <input id="snapToggle" type="checkbox" checked></label>
+      <label class="setting">Laptop connected <input id="connectionToggle" type="checkbox" checked></label>
+    </div>
+  </div>
+  <div id="titleblock" aria-label="Drawing title block">
+    <div class="cell part"><label for="partName">Part</label><input id="partName" value="Bracket concept" aria-label="Part name"></div>
+    <div class="cell drawing"><label>Drawing No.</label><span id="drawingNo">DWG-001</span></div>
+    <div class="cell drawn"><label for="drawnBy">Drawn by</label><input id="drawnBy" placeholder="Your name" aria-label="Drawn by"></div>
+    <div class="cell scale"><label for="scale">Scale</label><select id="scale" aria-label="Drawing scale"><option>1:1</option><option>1:2</option><option>2:1</option></select></div>
+    <div class="cell units"><label>Units</label><span>mm</span></div>
+    <div class="cell date"><label>Date</label><span id="date"></span></div>
+  </div>
