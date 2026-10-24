@@ -206,3 +206,10 @@ body{user-select:none;-webkit-user-select:none}
     if(dimPreview)drawDimension({a:dimFirst,b:dimPreview,value:null},true);
   }
   function showToast(text){const t=document.getElementById('toast');t.textContent=text;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),300)}
+  function setTool(next){
+    if(['undo','redo','clear','send'].includes(next)){act(next);return}
+    tool=next;dimFirst=null;dimPreview=null;
+    toolbar.querySelectorAll('[data-tool]').forEach(b=>{const sel=b.dataset.tool===tool;b.classList.toggle('selected',sel);b.setAttribute('aria-pressed',String(sel))});
+    render();
+  }
+  function updateUndo(){toolbar.querySelector('[data-tool="undo"]').disabled=!strokes.length&&!dimensions.length;toolbar.querySelector('[data-tool="redo"]').disabled=!redoStack.length}
