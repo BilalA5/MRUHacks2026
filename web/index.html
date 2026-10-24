@@ -124,7 +124,6 @@ input,select{font-size:16px}
 </head>
 <body>
 <div id="app" aria-label="Engineering drawing canvas">
-  <div id="sheet" aria-hidden="true"></div>
   <canvas id="drawing" aria-label="Drawing sheet. Draw with Apple Pencil."></canvas>
   <div id="hint" role="note">Draw your part. Tap Send when it's ready.</div>
 
@@ -246,6 +245,9 @@ input,select{font-size:16px}
   const ERASE_R = 14;                 // eraser circle radius, CSS px
 
   let dpr = 1;
+  let view = { x: 0, y: 0, s: 1 };     // top-left world point on screen, and zoom
+  const touches = new Map();           // active finger positions (screen px)
+  let pinch = null;                    // two-finger pan and zoom in progress
   let strokes = [], dimensions = [];  // strokes: {points:[{x,y,p}], shape?}; dimensions: {a,b,value}
   let undoStack = [], redoStack = [];
   let tool = 'pen', gesture = null, pointerPos = null, ruler = null;
@@ -277,7 +279,11 @@ input,select{font-size:16px}
   const ring = (cx, cy, r) => Array.from({ length: 65 }, (_, i) => ({
     x: cx + r * Math.cos(i / 64 * Math.PI * 2), y: cy + r * Math.sin(i / 64 * Math.PI * 2), p: .5
   }));
-  const point = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top, p: e.pressure || .5 }; };
+  // Infinite board: everything is stored in world coordinates. The view maps world to screen.
+  const screenPt = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const toWorld = s => ({ x: s.x / view.s + view.x, y: s.y / view.s + view.y });
+  const toScreen = w => ({ x: (w.x - view.x) * view.s, y: (w.y - view.y) * view.s });
+  const point = e => { const w = toWorld(screenPt(e)); return { x: w.x, y: w.y, p: e.pressure || .5 }; };
   const isInk = e => e.pointerType === 'pen' || e.pointerType === 'mouse';   // fingers never draw
   const modalOpen = () => dimSheet.classList.contains('open') || overlay.classList.contains('open');
 
@@ -498,52 +504,86 @@ input,select{font-size:16px}
     }
     if (dimPreview) drawDimension({ a: dimFirst, b: dimPreview });
   }
+  // World space to device pixels for the current view.
+  function worldTransform(c) { c.setTransform(dpr * view.s, 0, 0, dpr * view.s, -view.x * view.s * dpr, -view.y * view.s * dpr); }
+  // Changing the view invalidates the ink cache because the strokes move on screen.
+  function setView(x, y, s) { view = { x, y, s }; inkDirty = true; requestRender(); }
+  function zoomAt(screen, factor) {
+    const s = Math.min(8, Math.max(.2, view.s * factor));
+    const w = toWorld(screen);
+    setView(w.x - screen.x / s, w.y - screen.y / s, s);
+  }
+  // Two fingers: the point under the midpoint stays under the midpoint while the distance sets the zoom.
+  function startPinch() {
+    const [a, b] = [...touches.values()];
+    pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: view.s, anchor: toWorld({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }) };
+  }
+  function applyPinch() {
+    const [a, b] = [...touches.values()];
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const s = Math.min(8, Math.max(.2, pinch.s0 * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0));
+    setView(pinch.anchor.x - mid.x / s, pinch.anchor.y - mid.y / s, s);
+  }
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) zoomAt(screenPt(e), Math.exp(-e.deltaY * .01));
+    else setView(view.x + e.deltaX / view.s, view.y + e.deltaY / view.s, view.s);
+  }, { passive: false });
+
   function render() {
     const w = canvas.width / dpr, h = canvas.height / dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
     if (grid) {
-      ctx.save(); ctx.strokeStyle = '#E3E6EA'; ctx.lineWidth = 1; ctx.beginPath();
-      for (let x = .5; x < w; x += 20) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
-      for (let y = .5; y < h; y += 20) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
+      // Grid spacing doubles or halves so it stays between 16 and 64 px on screen at any zoom.
+      let gs = 20;
+      while (gs * view.s < 16) gs *= 2;
+      while (gs * view.s > 64) gs /= 2;
+      const x0 = Math.floor(view.x / gs) * gs, y0 = Math.floor(view.y / gs) * gs;
+      const x1 = view.x + w / view.s, y1 = view.y + h / view.s;
+      worldTransform(ctx);
+      ctx.save(); ctx.strokeStyle = '#E3E6EA'; ctx.lineWidth = 1 / view.s; ctx.beginPath();
+      for (let x = x0; x <= x1; x += gs) { ctx.moveTo(x, y0); ctx.lineTo(x, y1); }
+      for (let y = y0; y <= y1; y += gs) { ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
       ctx.stroke(); ctx.restore();
     }
     // Redraw the cache only when content changed; then blit it and add the live layer on top.
     if (inkDirty) {
       inkDirty = false;
-      inkCtx.setTransform(dpr, 0, 0, dpr, 0, 0); inkCtx.clearRect(0, 0, w, h);
+      inkCtx.setTransform(1, 0, 0, 1, 0, 0); inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+      worldTransform(inkCtx);
       drawInkLayer(inkCtx);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(inkCanvas, 0, 0);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    worldTransform(ctx);
     drawContent();
     if (tool === 'eraser' && pointerPos) {
-      ctx.save(); ctx.beginPath(); ctx.arc(pointerPos.x, pointerPos.y, ERASE_R, 0, Math.PI * 2);
+      // The eraser circle is drawn in screen pixels so it keeps its size at any zoom.
+      const ec = toScreen(pointerPos);
+      ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.beginPath(); ctx.arc(ec.x, ec.y, ERASE_R, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(31,42,54,.08)'; ctx.fill(); ctx.strokeStyle = '#1F2A36'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
     }
   }
   // Strokes and dimensions only, on white, with no grid, title block or previews. This is what the model sees.
   function exportPng() {
     const off = document.createElement('canvas'); off.width = canvas.width; off.height = canvas.height;
-    const prev = ctx; ctx = off.getContext('2d');
-    try {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-      for (const s of strokes) { const st = s.style || MARKERS.fine; drawPolyline(s.points, st.color, s.style ? st.w : null, !!s.dash, st.alpha); }
-      dimensions.forEach(drawDimension);
-    } finally { ctx = prev; }
+    const octx = off.getContext('2d');
+    octx.setTransform(1, 0, 0, 1, 0, 0); octx.fillStyle = '#FFFFFF'; octx.fillRect(0, 0, off.width, off.height);
+    worldTransform(octx);
+    drawInkLayer(octx);
     return off.toDataURL('image/png');
   }
 
   // ---------- eraser: circular brush, removes every stroke or dimension it touches ----------
   function strokeHit(s, p) {
     const pts = s.points;
-    if (pts.length === 1) return dist(p, pts[0]) <= ERASE_R;
-    for (let i = 1; i < pts.length; i++) if (distToSeg(p, pts[i - 1], pts[i]) <= ERASE_R) return true;
+    if (pts.length === 1) return dist(p, pts[0]) <= ERASE_R / view.s;
+    for (let i = 1; i < pts.length; i++) if (distToSeg(p, pts[i - 1], pts[i]) <= ERASE_R / view.s) return true;
     return false;
   }
   function eraseAt(p) {
     const before = strokes.length + dimensions.length;
     strokes = strokes.filter(s => !strokeHit(s, p));
-    dimensions = dimensions.filter(d => distToSeg(p, d.a, d.b) > ERASE_R);
+    dimensions = dimensions.filter(d => distToSeg(p, d.a, d.b) > ERASE_R / view.s);
     if (strokes.length + dimensions.length !== before) { gesture.changed = true; inkDirty = true; }
   }
 
@@ -659,13 +699,13 @@ input,select{font-size:16px}
     const now = performance.now();
     if (!poly) { poly = { pts: [p] }; polyLastTap = now; showToast('Tap the first corner to close'); return; }
     const first = poly.pts[0], last = poly.pts[poly.pts.length - 1];
-    if (poly.pts.length >= 3 && dist(p, first) < 20) {
+    if (poly.pts.length >= 3 && dist(p, first) < 20 / view.s) {
       const pts = [...poly.pts, first].map(q => ({ x: q.x, y: q.y, p: .5 }));
       poly = null;
       change(() => strokes.push({ points: pts, shape: { kind: 'polygon', closed: true } }));
       return;
     }
-    if (now - polyLastTap < 350 && dist(p, last) < 12) {
+    if (now - polyLastTap < 350 && dist(p, last) < 12 / view.s) {
       const pts = poly.pts.map(q => ({ x: q.x, y: q.y, p: .5 }));
       poly = null;
       if (pts.length >= 2) change(() => strokes.push({ points: pts, shape: { kind: 'polygon', closed: false } }));
@@ -675,6 +715,12 @@ input,select{font-size:16px}
   }
 
   canvas.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch') {
+      // Fingers navigate only. Two fingers pan and pinch; one finger does nothing, so a resting palm is harmless.
+      e.preventDefault(); touches.set(e.pointerId, screenPt(e));
+      if (touches.size === 2) { gesture = null; startPinch(); render(); }
+      return;
+    }
     if (!isInk(e) || modalOpen()) return;
     e.preventDefault(); canvas.setPointerCapture(e.pointerId);
     settingsMenu.classList.remove('open'); settingsBtn.setAttribute('aria-expanded', 'false');
@@ -702,6 +748,13 @@ input,select{font-size:16px}
     requestAnimationFrame(() => { frameQueued = false; render(); });
   }
   canvas.addEventListener('pointermove', e => {
+    if (e.pointerType === 'touch') {
+      if (touches.has(e.pointerId)) {
+        touches.set(e.pointerId, screenPt(e));
+        if (touches.size >= 2 && pinch) applyPinch();
+      }
+      return;
+    }
     if (!isInk(e)) return;
     const p = point(e); pointerPos = p;
     if (gesture) {
@@ -718,7 +771,7 @@ input,select{font-size:16px}
         } else {
           const samples = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
           for (const ev of (samples.length ? samples : [e])) gesture.points.push(point(ev));
-          if (dist(p, gesture.anchor) > HOLD_MOVE) { gesture.anchor = p; armHold(); }
+          if (dist(p, gesture.anchor) > HOLD_MOVE / view.s) { gesture.anchor = p; armHold(); }
         }
       }
       else gesture.cur = p;
@@ -756,8 +809,16 @@ input,select{font-size:16px}
     }
     render();
   }
-  canvas.addEventListener('pointerup', endGesture);
-  canvas.addEventListener('pointercancel', endGesture);
+  function release(e) {
+    if (e.pointerType === 'touch') {
+      touches.delete(e.pointerId);
+      if (touches.size < 2) pinch = null;
+      return;
+    }
+    endGesture();
+  }
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('pointerleave', () => { if (!gesture) { pointerPos = null; render(); } });
 
   // ---------- dimension value sheet ----------
