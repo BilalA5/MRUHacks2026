@@ -87,3 +87,34 @@ body{user-select:none;-webkit-user-select:none}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 </style>
+</head>
+<body>
+<div id="app" aria-label="Engineering drawing canvas">
+  <div id="sheet" aria-hidden="true"></div>
+  <canvas id="drawing" aria-label="Drawing sheet. Use Apple Pencil to draw. Finger touches on the sheet are ignored."></canvas>
+  <div id="hint">Draw your part. Tap Send when it's ready.</div>
+  <div id="status"><span class="dot" id="statusDot"></span><span id="statusText">Laptop connected</span></div>
+  <div id="toolbar" role="toolbar" aria-label="Drawing tools">
+    <button class="tool selected" data-tool="pen" data-tip="Pen" aria-label="Pen" aria-pressed="true">
+      <svg viewBox="0 0 24 24"><path d="m4 20 4.5-1 10.8-10.8a2.1 2.1 0 0 0-3-3L5.5 16 4 20Z"/><path d="m14.8 6.2 3 3"/></svg>
+    </button>
+    <button class="tool" data-tool="eraser" data-tip="Eraser" aria-label="Eraser" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><path d="m7 16-3-3a2 2 0 0 1 0-2.8l6.2-6.2a2 2 0 0 1 2.8 0l6 6a2 2 0 0 1 0 2.8L13 19.8H8.8Z"/><path d="m8.5 7.5 8 8"/></svg>
+    </button>
+    <button class="tool" data-tool="dimension" data-tip="Dimension" aria-label="Dimension" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><path d="M5 19 19 5"/><path d="m5 13 0 6 6 0M13 5h6v6"/><path d="M8 16 16 8"/></svg>
+    </button>
+    <button class="tool" data-tool="undo" data-tip="Undo" aria-label="Undo" disabled>
+      <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h9a6 6 0 0 1 0 12h-2"/></svg>
+    </button>
+    <button class="tool" data-tool="redo" data-tip="Redo" aria-label="Redo" disabled>
+      <svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9h-9a6 6 0 0 0 0 12h2"/></svg>
+    </button>
+    <button class="tool" data-tool="clear" data-tip="Clear" aria-label="Clear sheet">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+    </button>
+    <div class="separator" role="separator"></div>
+    <button class="tool send" data-tool="send" data-tip="Send" aria-label="Send drawing to laptop">
+      <svg id="sendIcon" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>
+    </button>
+  </div>
