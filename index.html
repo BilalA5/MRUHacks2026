@@ -1,11 +1,30 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-</head>
-<body>
-    
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#FBFBF7">
+<title>Draft — Engineering Sketch</title>
+<style>
+:root{
+  --paper:#FBFBF7;--grid:#E3E6EA;--line:#3B4650;--ink:#1F2A36;--accent:#2563EB;
+  --error:#B42318;--toolbar:rgba(255,255,255,.92);--radius:8px;--sheet-radius:12px;
+  --safe-top:env(safe-area-inset-top,0px);--safe-right:env(safe-area-inset-right,0px);
+  --safe-bottom:env(safe-area-inset-bottom,0px);--safe-left:env(safe-area-inset-left,0px);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--paper);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--line);overscroll-behavior:none;touch-action:pan-x pan-y}
+body{user-select:none;-webkit-user-select:none}
+#app{position:fixed;inset:0;background:var(--paper);overflow:hidden}
+#sheet{position:absolute;inset:20px;padding:0;border:2px solid var(--line);pointer-events:none}
+#drawing{position:absolute;inset:0;width:100%;height:100%;touch-action:none;pointer-events:auto}
+#hint{position:absolute;top:calc(24px + var(--safe-top));left:50%;transform:translateX(-50%);font-size:14px;color:#697580;background:rgba(255,255,255,.82);border:1px solid #e7e9e9;padding:9px 14px;border-radius:999px;white-space:nowrap;transition:opacity .2s ease;pointer-events:none}
+#hint.hidden{opacity:0}
+
+
+
+
+
 </body>
 </html>
