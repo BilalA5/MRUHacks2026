@@ -1,16 +1,19 @@
-# Where the bridge hands a finished drawing to the AI stage.
-# The AI plan replaces the body of on_build. Nothing else in the bridge needs to change.
+# Where the bridge hands a finished drawing on. Each build gets its own 3D model,
+# saved next to the drawing (sessions/<id>/b000N/model.step, .stl, .glb), so builds can be compared later.
+# The live model that follows the stream is built separately, in model.LiveBuilder.
 #
 # build = {"build": "b0003", "session", "seq", "receivedAt",
 #          "png": path to sketch.png, "part": partSketch() in mm, "elements": raw Excalidraw elements}
+from pathlib import Path
+
+import model
+
+ROOT = Path(__file__).resolve().parent
 
 
 def on_build(build):
-    part = build["part"]
-    features = part.get("features", [])
-    holes = sum(len(f.get("holes", [])) for f in features)
-    print(f"[handoff] {build['build']}: {len(features)} features, {holes} holes, "
-          f"{len(part.get('dimensions', []))} dimensions, image {build['png']}")
-    for f in features:
-        size = f"{f['depth']} mm deep" if f["type"] == "extrude" else f"{f.get('angle')}°"
-        print(f"  {f['type']} {size}, profile {f['profile']['type']}, {len(f.get('holes', []))} holes")
+    solid, info = model.build(build["part"])
+    if solid is not None:
+        model.export(solid, ROOT / Path(build["png"]).parent)
+    print(f"[handoff] {build['build']}: {info['status']}, {info.get('features', 0)} features, "
+          f"volume {info.get('volume', 0)} mm³" + "".join(f"\n  warning: {w}" for w in info["warnings"]))
