@@ -43,6 +43,16 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-dialog-actions button:active{transform:scale(.97)}
 .eng-dialog-actions .primary{background:#2563EB;border-color:#2563EB;color:#fff}
 @media (prefers-reduced-motion:reduce){.eng-dialog{animation:none}}
+/* Part feature dialog: Extrude / Revolve switch and a summary line */
+.eng-seg{display:flex;gap:4px;padding:3px;border-radius:10px;background:#f0f3f6}
+.eng-seg button{flex:1;min-height:38px;border:0;border-radius:8px;background:transparent;color:#3B4650;font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer}
+.eng-seg button.on{background:#fff;color:#1F2A36;box-shadow:0 1px 3px #1f2a3626}
+.eng-note{margin:0;color:#5b6772;font-size:13px}
+.eng-note.warn{color:#b45309}
+/* Excalidraw's shape properties sit on the right, clear of the engineering sidebar */
+.App-menu__left{position:fixed!important;top:72px;right:16px;left:auto!important;max-height:calc(100% - 96px);overflow-y:auto}
+/* Engineering lines are always clean: no sloppiness or rounded edges to choose */
+.App-menu__left fieldset:has(input[name="sloppiness"]),.App-menu__left fieldset:has(input[name="edges"]){display:none}
 /* Top bar: keep the drawing tools; hide image, the More tools menu and the tool lock */
 [title^="Insert image"],[title^="Keep selected tool"],.App-toolbar__extra-tools-trigger,.dropdown-menu-button{display:none!important}
 </style>
