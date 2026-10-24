@@ -1,0 +1,4 @@
+# Run by start.sh: switches FreeCAD to the BoardSketch workbench, which connects to the laptop server.
+import FreeCADGui as Gui
+
+Gui.activateWorkbench("BoardSketchWorkbench")
