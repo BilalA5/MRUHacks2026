@@ -180,6 +180,12 @@ function App() {
     flash("DXF downloaded");
   };
 
+  // Undo and redo use Excalidraw's own history, so its disabled states and shortcuts stay in step.
+  const clickExcalidraw = label => {
+    const b = document.querySelector(`button[aria-label="${label}"]`);
+    if (b && !b.disabled) b.click();
+  };
+
   const toggleGrid = () => {
     const on = !gridOn;
     setGridOn(on);
@@ -204,6 +210,8 @@ function App() {
         UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false, changeViewBackgroundColor: false, clearCanvas: true } }}
       />
       <div className="eng-tools" role="toolbar" aria-label="Engineering tools">
+        <button onClick={() => clickExcalidraw("Undo")}>Undo</button>
+        <button onClick={() => clickExcalidraw("Redo")}>Redo</button>
         <button onClick={centreLine}>Centre line</button>
         <button onClick={dimension}>Dimension</button>
         <button onClick={hatch}>Hatch</button>
