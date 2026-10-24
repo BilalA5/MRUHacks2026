@@ -126,7 +126,6 @@ body{user-select:none;-webkit-user-select:none}
     <div id="settingsMenu">
       <label class="setting">Show grid <input id="gridToggle" type="checkbox" checked></label>
       <label class="setting">Snap shapes <input id="snapToggle" type="checkbox" checked></label>
-      <label class="setting">Laptop connected <input id="connectionToggle" type="checkbox" checked></label>
     </div>
   </div>
   <div id="titleblock" aria-label="Drawing title block">
@@ -163,7 +162,7 @@ body{user-select:none;-webkit-user-select:none}
   const notice=document.getElementById('notice'), sentBadge=document.getElementById('sentBadge');
   const gridToggle=document.getElementById('gridToggle'),snapToggle=document.getElementById('snapToggle');
   let dpr=1, strokes=[],redoStack=[],dimensions=[],active=null,tool='pen',dimFirst=null,dimPreview=null;
-  let grid=true,snap=true,connected=true,sending=false,drawingNo=1,toastTimer,sentTimer;
+  let grid=true,snap=true,connected=false,sending=false,drawingNo=1,toastTimer,sentTimer;
   const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const point=e=>{const r=canvas.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top,p:e.pressure||.5}};
   function resize(){
@@ -311,13 +310,17 @@ body{user-select:none;-webkit-user-select:none}
   };
   gridToggle.onchange=()=>{grid=gridToggle.checked;render()};
   snapToggle.onchange=()=>snap=snapToggle.checked;
-  document.getElementById('connectionToggle').onchange=e=>{connected=e.target.checked;updateConnection()};
   function updateConnection(){
     document.getElementById('statusDot').style.background=connected?'#2f9b69':'#B42318';
     document.getElementById('statusText').textContent=connected?'Laptop connected':'Laptop disconnected';
-    const sendBtn=toolbar.querySelector('[data-tool="send"]');sendBtn.disabled=!connected||sending;
-    if(!connected){notice.classList.remove('visible');showToast('Connect to the laptop to send.')}
-    render();
+    toolbar.querySelector('[data-tool="send"]').disabled=!connected||sending;
+  }
+  // Real check against the laptop's health endpoint. Runs on load, on a timer, and before a retry.
+  async function checkConnection(){
+    try{const r=await fetch('/api/health',{cache:'no-store'});connected=r.ok}
+    catch(err){connected=false}
+    updateConnection();
+    return connected;
   }
   function send(){
     if(!connected||sending){if(!connected)showToast('Connect to the laptop to send.');return}
@@ -347,7 +350,7 @@ body{user-select:none;-webkit-user-select:none}
     if(e.key==='Escape'){overlay.classList.remove('open');closeDimension();document.getElementById('settingsMenu').classList.remove('open')}
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();act(e.shiftKey?'redo':'undo')}
   });
-  window.addEventListener('resize',resize);resize();updateUndo();updateConnection();
+  window.addEventListener('resize',resize);resize();updateUndo();updateConnection();checkConnection();setInterval(checkConnection,5000);
 })();
 </script>
 </body>
