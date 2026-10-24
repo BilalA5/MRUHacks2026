@@ -9,6 +9,7 @@ import {
 } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { ICONS } from "./icons.js";
+import { createBridge } from "./bridge.js";
 
 const PAPER = "#FBFBF7";        // drawing paper
 const INK = "#1F2A36";          // graphite lines
@@ -32,8 +33,12 @@ const fmt = n => String(Math.round(n * 100) / 100);
 const r2 = n => Math.round(n * 100) / 100;
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
 
-// Tool edits go straight onto the undo stack.
-const commit = (api, elements) => api.updateScene({ elements, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+// Tool edits go straight onto the undo stack. Lines they make count as tidy already (see tidyLine).
+const tidyLines = new Set();
+const commit = (api, elements) => {
+  elements.forEach(el => { if (el.type === "line") tidyLines.add(el.id); });
+  api.updateScene({ elements, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+};
 
 const isNote = el => !!el.customData?.note;     // dimension or label made by a tool, not part geometry
 const live = api => api.getSceneElements().filter(el => !el.isDeleted);
@@ -264,15 +269,15 @@ function corners(pts, eps) {
   return [...corners(pts.slice(0, at + 1), eps).slice(0, -1), ...corners(pts.slice(at), eps)];
 }
 
-// Drop corners where the outline barely turns (under 20°), going round a closed loop.
-function dropStraight(pts) {
+// Drop corners where the outline barely turns (under maxDeg), going round a closed loop.
+function dropStraight(pts, maxDeg = 20) {
   let out = pts, changed = true;
   while (changed && out.length > 3) {
     changed = false;
     for (let i = 0; i < out.length; i++) {
       const a = out[(i - 1 + out.length) % out.length], b = out[i], c = out[(i + 1) % out.length];
       const turn = Math.abs(Math.atan2((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x), (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y)));
-      if (turn < 20 * Math.PI / 180) { out = out.filter((_, j) => j !== i); changed = true; break; }
+      if (turn < maxDeg * Math.PI / 180) { out = out.filter((_, j) => j !== i); changed = true; break; }
     }
   }
   return out;
@@ -323,11 +328,19 @@ function snapStroke(api, el, flash) {
 // A marked profile carries customData.part = { feature: "extrude", depthMm } or { feature: "revolve", angleDeg, axis: line id }.
 // Closed shapes inside it are holes, cut through: customData.part = { hole: true, of: profile id }.
 
-// What Mark profile would do with the selection: the outer outlines, the holes inside each, and the centre line.
-function planPart(api) {
-  const sel = selected(api).filter(el => !isNote(el));
-  const axis = sel.find(el => el.type === "line" && el.strokeStyle === "dashed");
-  const picked = closedShapes(sel);
+const isCentreLine = el => el.type === "line" && el.strokeStyle === "dashed" && !isNote(el);
+const lineEnds = el => [el.points[0], el.points[el.points.length - 1]].map(([px, py]) => ({ x: el.x + px, y: el.y + py }));
+
+// Whether points lie on both sides of a centre line.
+function crosses(axis, pts) {
+  const [a, b] = lineEnds(axis);
+  const sides = pts.map(p => Math.sign(Math.round((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x))));
+  return sides.includes(1) && sides.includes(-1);
+}
+
+// What Profile would do with the picked outlines: the outer outlines, the holes inside each, and the centre line.
+// With no centre line given, the nearest one the outlines do not cross is used, if it is close by.
+function planPart(api, picked, axis) {
   if (!picked.length) return null;
   const pts = new Map(closedShapes(live(api)).map(el => [el.id, outline(el).pts]));
   const outers = [];
@@ -340,13 +353,13 @@ function planPart(api) {
     const inner = closedShapes(live(api)).filter(s => !outerIds.has(s.id) && within(pts.get(s.id), pts.get(o.el.id)));
     o.holes = inner.filter(s => !inner.some(t => t !== s && within(pts.get(s.id), pts.get(t.id))));
   }
-  let crossesAxis = false;
-  if (axis) {
-    const [a, b] = [axis.points[0], axis.points[axis.points.length - 1]].map(([px, py]) => ({ x: axis.x + px, y: axis.y + py }));
-    const sides = outers.flatMap(o => pts.get(o.el.id)).map(p => Math.sign(Math.round((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x))));
-    crossesAxis = sides.includes(1) && sides.includes(-1);
+  const all = outers.flatMap(o => pts.get(o.el.id));
+  if (!axis) {
+    const b = bounds(all), reach = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+    const gap = line => { const [a, c] = lineEnds(line); return Math.min(...all.map(p => segDist(p, a, c))); };
+    axis = live(api).filter(el => isCentreLine(el) && !crosses(el, all) && gap(el) <= reach).sort((p, q) => gap(p) - gap(q))[0];
   }
-  return { outers, axis, crossesAxis };
+  return { outers, axis, crossesAxis: !!axis && crosses(axis, all) };
 }
 
 function applyPart(api, plan, feature, flash) {
@@ -766,60 +779,56 @@ function toDxf(elements) {
 
 // ---- Tools. Each one reports what it did, or why it could not run. ----
 
-// Centre of what is on screen, in scene coordinates.
-function screenCentre(api) {
-  const s = api.getAppState();
-  return { x: -s.scrollX + s.width / (2 * s.zoom.value), y: -s.scrollY + s.height / (2 * s.zoom.value) };
-}
-
-function centreLine(api, flash) {
-  const c = screenCentre(api);
-  commit(api, [...api.getSceneElements(), ...convertToExcalidrawElements([
-    { type: "line", x: c.x - 200, y: c.y, points: [[0, 0], [400, 0]], strokeStyle: "dashed", strokeColor: BLUE, strokeWidth: 1 },
-  ])]);
-  flash("Centre line added");
-}
-
-// Mirror: reflect the selected shapes across the selected dashed centre line.
-// Circles stay circles so they can still be dimensioned and used as holes.
-function mirror(api, flash) {
-  const axis = selected(api).find(el => el.type === "line" && el.strokeStyle === "dashed");
-  if (!axis) return flash("Select a dashed centre line and the shapes to mirror", "warn");
-  const [a, b] = [axis.points[0], axis.points[axis.points.length - 1]].map(([px, py]) => ({ x: axis.x + px, y: axis.y + py }));
-  const d = { x: b.x - a.x, y: b.y - a.y };
-  const targets = selected(api).filter(el => el !== axis && !isNote(el) && el.type !== "text" && outline(el));
-  if (!targets.length) return flash("Select the shapes to mirror as well", "warn");
-  const made = targets.map(el => {
-    const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth, strokeStyle: el.strokeStyle };
-    if (isRound(el)) {
-      const c = reflect(centreOf(el), a, d);
-      return { type: "ellipse", x: c.x - el.width / 2, y: c.y - el.height / 2, width: el.width, height: el.height, ...style };
-    }
+// Mirror: reflect shapes across the nearest centre line, or across their right edge when none is drawn.
+// The copy keeps every style of the original. An open outline whose two ends sit on the centre line
+// becomes one closed, symmetric outline, so half a part can be drawn and mirrored into a whole one.
+const STYLE = ["strokeColor", "backgroundColor", "fillStyle", "strokeWidth", "strokeStyle", "roughness", "opacity", "roundness"];
+function mirrorShapes(api, targets, flash, chosen) {
+  const b = bounds(targets.flatMap(el => outline(el).pts)), mid = { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
+  const axis = chosen || live(api).filter(el => isCentreLine(el) && !targets.includes(el))
+    .sort((p, q) => segDist(mid, ...lineEnds(p)) - segDist(mid, ...lineEnds(q)))[0];
+  const [a, e] = axis ? lineEnds(axis) : [{ x: b.maxX, y: b.minY }, { x: b.maxX, y: b.maxY }];
+  const d = { x: e.x - a.x, y: e.y - a.y }, len = Math.hypot(d.x, d.y);
+  const onAxis = p => Math.abs((p.x - a.x) * d.y - (p.y - a.y) * d.x) / len <= 10;
+  const level = Math.abs(d.x) < 0.01 * len || Math.abs(d.y) < 0.01 * len;   // the axis is upright or level
+  const styleOf = el => Object.fromEntries(STYLE.map(k => [k, el[k]]));
+  const made = [], joined = new Map();
+  for (const el of targets) {
     const o = outline(el);
-    return polyline(o.pts.map(p => reflect(p, a, d)), o.closed, style);
-  });
-  commit(api, [...api.getSceneElements(), ...convertToExcalidrawElements(made)]);
-  flash(`Mirrored ${made.length} item${made.length > 1 ? "s" : ""}`);
+    if (el.type === "line" && !o.closed && o.pts.length >= 3 && onAxis(o.pts[0]) && onAxis(o.pts[o.pts.length - 1])) {
+      const foot = p => { const m = reflect(p, a, d); return { x: (p.x + m.x) / 2, y: (p.y + m.y) / 2 }; };
+      const half = [foot(o.pts[0]), ...o.pts.slice(1, -1), foot(o.pts[o.pts.length - 1])];
+      joined.set(el.id, reshape(el, dropStraight([...half, ...half.slice(1, -1).reverse().map(p => reflect(p, a, d))], 1), true));
+    } else if (["rectangle", "diamond", "ellipse"].includes(el.type) && (isRound(el) || (level && !el.angle))) {
+      const c = reflect(centreOf(el), a, d);
+      made.push({ type: el.type, x: c.x - el.width / 2, y: c.y - el.height / 2, width: el.width, height: el.height });
+    } else {
+      made.push(polyline(o.pts.map(p => reflect(p, a, d)), o.closed, {}));
+    }
+  }
+  const sources = targets.filter(el => !joined.has(el.id));
+  const copies = convertToExcalidrawElements(made).map((m, i) => ({ ...m, ...styleOf(sources[i]) }));
+  commit(api, [...api.getSceneElements().map(el => joined.get(el.id) || el), ...copies]);
+  const what = joined.size ? "Mirrored into a closed outline" : targets.length > 1 ? `Mirrored ${targets.length} items` : "Mirrored";
+  flash(what + (axis ? "" : " across its right edge"));
 }
 
-// Square up: square every segment of the selected lines to 0, 45, 90 or 135 degrees when close,
-// and join open ends to a nearby corner of another shape within 10 px.
-function squareUpLines(api, flash) {
-  const sel = selected(api).filter(el => (el.type === "line" || el.type === "arrow") && !isNote(el));
-  if (!sel.length) return flash("Select a line first", "warn");
-  const ids = new Set(sel.map(el => el.id));
-  const anchors = live(api).filter(el => !ids.has(el.id) && !isNote(el) && el.type !== "freedraw" && el.type !== "ellipse" && outline(el)).flatMap(el => outline(el).pts);
+// New lines are tidied as soon as they are finished: each segment within 6° of level, upright or 45°
+// is squared, open ends join a nearby corner of another shape, and a line that ends near its start is closed.
+// Lines made by the tools are already clean and are skipped (see commit).
+function tidyLine(api, el) {
+  const anchors = live(api).filter(x => x.id !== el.id && !isNote(x) && x.type !== "freedraw" && x.type !== "ellipse" && outline(x)).flatMap(x => outline(x).pts);
   const join = p => {
     let best = p, bestD = 10;
-    for (const a of anchors) { const d = dist(a, p); if (d < bestD) { bestD = d; best = a; } }
+    for (const q of anchors) { const dd = dist(q, p); if (dd < bestD) { bestD = dd; best = q; } }
     return best;
   };
-  const fixed = new Map(sel.map(el => {
-    const o = outline(el);
-    return [el.id, reshape(el, squarePath(o.pts, o.closed, join), o.closed)];
-  }));
-  commit(api, api.getSceneElements().map(el => fixed.get(el.id) || el));
-  flash("Squared up");
+  let { pts, closed } = outline(el);
+  const b = bounds(pts), size = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+  if (!closed && pts.length >= 4 && dist(pts[0], pts[pts.length - 1]) <= Math.max(14, 0.08 * size)) { pts = pts.slice(0, -1); closed = true; }
+  const q = squarePath(pts, closed, join);
+  const same = q.length === pts.length && q.every((p, i) => dist(p, pts[i]) < 0.01) && closed === outline(el).closed;
+  return same ? null : reshape(el, q, closed);
 }
 
 function toggleGrid(api) {
@@ -837,24 +846,26 @@ function exportDxf(api, flash) {
 }
 
 // The sidebar follows the order of the work: sketch the outline, size it, then make it a part.
-// A tool with pick waits for a tap on the drawing.
+// Each tool works on what is selected when that fits; otherwise it waits for a tap on the drawing (its mode).
 const SECTIONS = [
   { title: "Sketch", items: [
-    { label: "Centre line", icon: "Minus", run: centreLine },
-    { label: "Mirror", icon: "Mirror", run: mirror },
-    { label: "Square up", icon: "VectorSquare", run: squareUpLines },
+    { label: "Centre line", icon: "Minus", mode: "centre" },
+    { label: "Mirror", icon: "Mirror", mode: "mirror" },
   ] },
   { title: "Measure", items: [
-    { label: "Dimension", icon: "Frame2", pick: "dim" },
+    { label: "Dimension", icon: "Frame2", mode: "dim" },
   ] },
   { title: "Part", items: [
-    { label: "Profile", icon: "Layers", run: "profile" },
-    { label: "Hole", icon: "Crosshairs", pick: "hole" },
-    { label: "Pattern", icon: "Category", pick: "pattern" },
+    { label: "Profile", icon: "Layers", mode: "profile" },
+    { label: "Hole", icon: "Crosshairs", mode: "hole" },
+    { label: "Pattern", icon: "Category", mode: "pattern" },
   ] },
 ];
 
 const PICK_HINTS = {
+  centre: "Draw the centre line",
+  mirror: "Tap the shape to mirror",
+  profile: "Tap inside the outline to make it a part",
   dim: "Tap an edge or a circle to dimension it",
   hole: "Tap inside a profile where the hole goes",
   pattern: "Tap a hole to repeat it, or a revolved profile for bolt holes",
@@ -889,6 +900,8 @@ function App() {
   const [api, setApi] = useState(null);
   const [gridOn, setGridOn] = useState(true);
   const [empty, setEmpty] = useState(true);       // nothing drawn yet: show how to start
+  const [link, setLink] = useState({ state: "offline", text: "Connecting" });   // whether the laptop has the latest drawing
+  const bridgeRef = useRef(null);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
   const [dialog, setDialog] = useState(null);     // the open dialog: dim, part, hole, pattern or bolts
@@ -909,6 +922,8 @@ function App() {
   };
 
   const setPick = mode => {
+    if (pickingRef.current === "centre" && !mode) api?.setActiveTool({ type: "selection" });
+    if (mode === "centre") api.setActiveTool({ type: "line" });   // Centre line waits for a drawn line, not a tap
     pickingRef.current = mode;
     setPicking(mode);
     if (mode) flash(PICK_HINTS[mode], "ok", true);
@@ -922,7 +937,27 @@ function App() {
     setPick(null);
     if (mode === "dim") pickDimension(p, tol);
     else if (mode === "hole") pickHole(p, tol);
-    else pickPattern(p, tol);
+    else if (mode === "pattern") pickPattern(p, tol);
+    else if (mode === "mirror") pickMirror(p, tol);
+    else pickProfile(p, tol);
+  };
+
+  const pickMirror = (p, tol) => {
+    const hit = pickAt(api.getSceneElements(), p, tol);
+    const el = hit?.el || partAt(p, tol)?.profile;
+    if (!el) return flash("Nothing to mirror there. Tap a shape or its edge", "warn");
+    mirrorShapes(api, [el], flash);
+  };
+
+  const openPart = plan => {
+    const was = plan.outers[0].el.customData?.part;
+    setDialog({ type: "part", plan, mode: plan.axis ? "revolve" : "extrude", depth: fmt(was?.depthMm ?? 10), angle: fmt(was?.angleDeg ?? 360) });
+  };
+
+  const pickProfile = (p, tol) => {
+    const hit = partAt(p, tol);
+    if (!hit) return flash("Tap inside a closed outline: a shape, or a line or stroke that ends where it started", "warn");
+    openPart(planPart(api, [hit.profile], null));
   };
 
   const pickDimension = (p, tol) => {
@@ -1072,7 +1107,7 @@ function App() {
       }
       if (e.pointerType === "touch" && api.getAppState().penMode) return;   // fingers never pick or snap
       penId = e.pointerId;
-      if (pickingRef.current) {
+      if (pickingRef.current && pickingRef.current !== "centre") {
         e.stopPropagation(); e.preventDefault();
         pressAt.current = null;
         return pickTap(e);
@@ -1118,6 +1153,7 @@ function App() {
 
   // Every board change: remember the newest pen stroke, and snap it if it was held still.
   const handleChange = (elements, appState) => {
+    bridgeRef.current?.changed(elements);
     setGridOn(!!appState.gridModeEnabled);
     setEmpty(!elements.some(e => !e.isDeleted));
     const strokes = elements.filter(e => e.type === "freedraw" && !e.isDeleted);
@@ -1128,6 +1164,17 @@ function App() {
       holdPending.current = false;
       const el = elements.find(e => e.id === activeStroke.current && e.type === "freedraw" && !e.isDeleted);
       if (el) snapStroke(api, el, flash);
+    }
+    // A line just finished: tidy it, and if Centre line was waiting, make it the centre line.
+    if (api && !appState.multiElement && !appState.newElement && !appState.editingLinearElement) {
+      const done = elements.filter(e => e.type === "line" && !e.isDeleted && !isNote(e) && !tidyLines.has(e.id));
+      if (!done.length) return;
+      done.forEach(e => tidyLines.add(e.id));
+      const fixed = new Map(done.map(e => [e.id, tidyLine(api, e)]).filter(([, t]) => t));
+      const centre = pickingRef.current === "centre" ? done[done.length - 1] : null;
+      if (centre) fixed.set(centre.id, bump({ ...(fixed.get(centre.id) || centre), strokeStyle: "dashed", strokeColor: BLUE, strokeWidth: 1 }));
+      if (fixed.size) commit(api, api.getSceneElements().map(e => fixed.get(e.id) || e));
+      if (centre) { setPick(null); flash("Centre line added"); }
     }
   };
 
@@ -1152,7 +1199,7 @@ function App() {
     } else {
       const a = parseFloat(dialog.angle);
       if (!(a > 0 && a <= 360)) return flash("Enter an angle from 1 to 360°", "warn");
-      if (!plan.axis) return flash("Select a dashed centre line with the profile to revolve", "warn");
+      if (!plan.axis) return flash("Draw a centre line beside the profile to revolve round it", "warn");
       if (plan.crossesAxis) return flash("The profile crosses the centre line. Keep it on one side to revolve", "warn");
       applyPart(api, plan, { feature: "revolve", angleDeg: a }, flash);
     }
@@ -1196,18 +1243,29 @@ function App() {
     window.partSketch = () => partSketch(api.getSceneElements());
   }, [api]);
 
+  // The bridge streams the drawing to the laptop while the user draws (bridge.js).
+  useEffect(() => {
+    if (!api) return;
+    // A part is ready for the AI once it has at least one marked profile.
+    const bridge = createBridge({ api, partOf: partSketch, ready: part => part.features?.length > 0, onStatus: setLink,
+      onBuildError: message => flash(`Could not send to the AI: ${message}`, "warn") });
+    bridgeRef.current = window.bridge = bridge;
+    return () => bridge.stop();
+  }, [api]);
+
+  // A tool works on the selection when that fits, otherwise it waits for a tap. Tapping it again cancels.
   const run = (item) => {
     if (!api) return;
-    if (item.pick) return setPick(pickingRef.current === item.pick ? null : item.pick);
+    const mode = item.mode, again = pickingRef.current === mode;
     if (pickingRef.current) setPick(null);
-    if (item.run === "profile") {
-      const plan = planPart(api);
-      if (!plan) return flash("Select a closed outline first: a shape, or a line or stroke that ends where it started", "warn");
-      const was = plan.outers[0].el.customData?.part;
-      return setDialog({ type: "part", plan, mode: plan.axis ? "revolve" : "extrude",
-        depth: fmt(was?.depthMm ?? 10), angle: fmt(was?.angleDeg ?? 360) });
+    if (again) return;
+    const sel = selected(api).filter(el => !isNote(el));
+    if (mode === "mirror") {
+      const shapes = sel.filter(el => el.type !== "text" && outline(el) && !isCentreLine(el));
+      if (shapes.length) return mirrorShapes(api, shapes, flash, sel.find(isCentreLine));
     }
-    item.run(api, flash);
+    if (mode === "profile" && closedShapes(sel).length) return openPart(planPart(api, closedShapes(sel), sel.find(isCentreLine)));
+    setPick(mode);
   };
 
   const field = key => ({ value: dialog[key], onChange: v => setDialog(d => ({ ...d, [key]: v })) });
@@ -1242,9 +1300,9 @@ function App() {
           <section key={section.title}>
             <h3>{section.title}</h3>
             {section.items.map(item => {
-              const on = !!item.pick && picking === item.pick;
+              const on = picking === item.mode;
               return (
-                <button key={item.label} onClick={() => run(item)} aria-pressed={item.pick ? on : undefined} className={on ? "on" : ""}>
+                <button key={item.label} onClick={() => run(item)} aria-pressed={on} className={on ? "on" : ""}>
                   <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS[item.icon] }} />
                   <span>{item.label}</span>
                 </button>
@@ -1259,6 +1317,9 @@ function App() {
           <button onClick={() => api && exportDxf(api, flash)} title="Download the drawing as DXF">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Upload }} /><span>DXF</span>
           </button>
+        </div>
+        <div className="eng-send">
+          <p className={"eng-link " + link.state} role="status" aria-live="polite">{link.text}</p>
         </div>
       </aside>
 
@@ -1275,7 +1336,7 @@ function App() {
           <Seg label="Feature" options={{ extrude: "Extrude", revolve: "Revolve" }} value={dialog.mode} onChange={m => setDialog(d => ({ ...d, mode: m }))} />
           {dialog.mode === "extrude" ? <Num label="Depth (mm)" autoFocus {...field("depth")} /> : <Num label="Angle (°)" {...field("angle")} />}
           <p className={"eng-note" + (dialog.mode === "revolve" && (!dialog.plan.axis || dialog.plan.crossesAxis) ? " warn" : "")}>
-            {dialog.mode === "revolve" && !dialog.plan.axis ? "Select a dashed centre line with the profile to revolve round it."
+            {dialog.mode === "revolve" && !dialog.plan.axis ? "Draw a centre line beside the profile to revolve round it."
               : dialog.mode === "revolve" && dialog.plan.crossesAxis ? "The profile crosses the centre line. Keep it on one side."
               : `${dialog.plan.outers.length > 1 ? dialog.plan.outers.length + " profiles" : "1 profile"}` +
                 (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} cut through` : ", no holes")}

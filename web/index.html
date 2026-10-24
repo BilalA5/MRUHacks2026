@@ -29,6 +29,14 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 /* Sheet settings: a small pair of toggles under the tools */
 .eng-sheet{display:flex;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid #edf0f3}
 .eng-sheet button{flex:1;justify-content:center;gap:6px;min-height:40px;padding:0 6px;font-size:13px;color:#5b6772}
+/* Bridge: whether the laptop has the latest drawing and which build the AI has */
+.eng-send{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #edf0f3}
+.eng-link{display:flex;align-items:center;gap:7px;margin:0 0 0 8px;font:500 12px -apple-system,BlinkMacSystemFont,sans-serif;color:#5b6772}
+.eng-link::before{content:"";width:6px;height:6px;border-radius:50%;background:#9aa5b1;flex:none;transition:background-color 200ms ease}
+.eng-link.live::before{background:#16a34a}
+.eng-link.syncing::before{background:#2563EB}
+.eng-link.offline{color:#7A4A06}.eng-link.offline::before{background:#d97706}
+.eng-link.error{color:#b42318}.eng-link.error::before{background:#b42318}
 /* Status toast: shows what an engineering tool did, or why it could not run */
 .eng-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:12px;max-width:min(440px,calc(100vw - 32px));padding:10px 16px;border:1px solid #e3e7eb;border-radius:12px;background:#fff;color:#1F2A36;font:500 14px/1.35 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 8px 24px #1f2a3614;pointer-events:none;animation:eng-toast-in 200ms cubic-bezier(.23,1,.32,1) both}
 .eng-toast.warn{background:#FFFAEB;border-color:#F3DFA8;color:#7A4A06}
