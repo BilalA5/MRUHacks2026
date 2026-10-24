@@ -260,3 +260,15 @@ body{user-select:none;-webkit-user-select:none}
   function finishStroke(){if(!active)return;active.points=snappedPoints(active.points);strokes.push(active);active=null;redoStack=[];updateUndo();render()}
   canvas.addEventListener('pointerup',finishStroke);canvas.addEventListener('pointercancel',finishStroke);
   canvas.addEventListener('pointerleave',()=>{if(active)finishStroke()});
+  function openDimension(p){
+    dimPreview=p;dimSheet.classList.add('open');
+    const measured=Math.max(0,Math.hypot(p.x-dimFirst.x,p.y-dimFirst.y));
+    dimValue.value=(Math.round(measured*10)/10).toString();
+    setTimeout(()=>{dimValue.focus();dimValue.select()},reduced?0:210);render();
+  }
+  function closeDimension(){dimSheet.classList.remove('open');dimFirst=null;dimPreview=null;render()}
+  document.getElementById('dimCancel').onclick=closeDimension;
+  document.getElementById('dimAdd').onclick=()=>{
+    const v=parseFloat(dimValue.value);if(!Number.isFinite(v)||v<0){dimValue.focus();return}
+    dimensions.push({a:dimFirst,b:dimPreview,value:v});redoStack=[];closeDimension();updateUndo();
+  };
