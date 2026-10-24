@@ -7,10 +7,11 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import handoff
+import model
 
 # Paths are absolute so the server works no matter which folder it starts from
 ROOT = Path(__file__).resolve().parent
@@ -22,6 +23,22 @@ app = FastAPI()
 latest = {}          # session -> its newest snapshot
 newest = None        # the session that sent most recently
 listeners = set()    # one queue per open /api/stream
+loop = None          # the server's event loop, so the model worker can publish to it
+
+
+@app.on_event("startup")
+async def startup():
+    global loop
+    loop = asyncio.get_running_loop()
+
+
+# The 3D model follows the stream: every snapshot goes to the builder, which publishes a "model" event.
+# It runs in its own thread, so it hands events to the event loop rather than touching the queues itself.
+def on_model(info):
+    if loop:
+        loop.call_soon_threadsafe(publish, "model", info)
+
+builder = model.LiveBuilder(SESSION_DIR, on_model=on_model)
 
 
 # After a restart, pick up each session's newest snapshot from disk
@@ -32,6 +49,8 @@ def restore():
         latest[snap["session"]] = snap
         if newest is None or snap["receivedAt"] > latest[newest]["receivedAt"]:
             newest = snap["session"]
+    if newest:
+        builder.submit(latest[newest])
 
 restore()
 
@@ -90,6 +109,7 @@ async def post_scene(request: Request):
     print(f"[scene] {session} #{seq}  {len(snap['elements'])} elements  "
           f"{len(snap['part'].get('features', []))} features{delay}")
     publish("scene", snap)
+    builder.submit(snap)
     return {"ok": True, "ack": seq}
 
 
@@ -138,12 +158,36 @@ async def get_scene(session: str | None = None):
     return snap
 
 
-# Server-Sent Events: the current snapshot first, then every new snapshot and build
+# The live 3D model: what was built (GET /api/model/info) and its files (GET /api/model?format=stl|step|glb)
+@app.get("/api/model/info")
+async def model_info(session: str | None = None):
+    info = builder.latest.get(session or newest)
+    if not info:
+        raise HTTPException(status_code=404, detail="no model built yet")
+    return info
+
+
+@app.get("/api/model")
+async def model_file(session: str | None = None, format: str = "stl"):
+    session = session or newest
+    if format not in model.FORMATS:
+        raise HTTPException(status_code=400, detail=f"format must be one of {', '.join(model.FORMATS)}")
+    if session not in latest:   # only known sessions, so the name can't reach outside sessions/
+        raise HTTPException(status_code=404, detail="no such session")
+    path = SESSION_DIR / session / "model" / model.FORMATS[format]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="no model built yet")
+    return FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+
+# Server-Sent Events: the current snapshot and model first, then every new snapshot, model and build
 @app.get("/api/stream")
 async def stream():
     queue = asyncio.Queue()
     if newest:
         queue.put_nowait(("scene", latest[newest]))
+    if newest in builder.latest:
+        queue.put_nowait(("model", builder.latest[newest]))
     listeners.add(queue)
 
     async def events():
