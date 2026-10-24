@@ -40,6 +40,9 @@ input,select{font-size:16px}
 .tool.send{background:var(--accent);color:#fff}
 .tool.send:disabled{background:#8AA7EF;opacity:.7}
 .separator{height:1px;background:#dfe3e7;margin:3px 4px;flex:none}
+/* Geometry flyout: opens to the right of the toolbar */
+#geoFlyout{position:absolute;left:calc(var(--edge) + var(--safe-l) + 56px + 8px);top:50%;z-index:5;display:flex;flex-direction:column;gap:4px;padding:6px;background:rgba(255,255,255,.96);border:1px solid rgba(59,70,80,.12);border-radius:12px;box-shadow:0 8px 28px rgba(31,42,54,.12),0 1px 3px rgba(31,42,54,.07);transform-origin:left center;opacity:0;transform:translateY(-50%) scale(.97);pointer-events:none;transition:opacity 160ms ease,transform 160ms var(--ease-out)}
+#geoFlyout.open{opacity:1;transform:translateY(-50%);pointer-events:auto}
 @media (hover:hover) and (pointer:fine){
   .tool:hover{background:#f0f3f6}
   .tool.selected:hover{background:#dfe8ff}
@@ -117,6 +120,7 @@ input,select{font-size:16px}
   #hint{top:calc(56px + var(--safe-t));max-width:calc(100vw - 150px);font-size:13px}
   #settings{top:calc(56px + var(--safe-t))}
   #status{font-size:12px;padding:6px 10px}
+  #geoFlyout{left:calc(10px + var(--safe-l) + 50px + 8px)}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
 </style>
@@ -144,12 +148,10 @@ input,select{font-size:16px}
     <button class="tool mode" data-tool="circle" data-tip="Circle" aria-label="Circle" aria-pressed="false">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>
     </button>
-    <button class="tool mode" data-tool="ruler" data-tip="Ruler" aria-label="Ruler" aria-pressed="false">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.6882 4.14229L14.6516 5.10571C14.9445 5.3986 14.9445 5.87348 14.6516 6.16637C14.3588 6.45926 13.8839 6.45926 13.591 6.16637L12.6269 5.20228L11.5662 6.26294L13.2374 7.93414C13.5303 8.22703 13.5303 8.7019 13.2374 8.9948C12.9445 9.28769 12.4697 9.28769 12.1768 8.9948L10.5056 7.3236L9.44492 8.38426L10.409 9.34835C10.7019 9.64124 10.7019 10.1161 10.409 10.409C10.1161 10.7019 9.64124 10.7019 9.34835 10.409L8.38426 9.44492L7.3236 10.5056L8.9948 12.1768C9.28769 12.4697 9.28769 12.9445 8.9948 13.2374C8.7019 13.5303 8.22703 13.5303 7.93414 13.2374L6.26294 11.5662L5.20228 12.6269L6.16637 13.591C6.45926 13.8839 6.45926 14.3588 6.16637 14.6516C5.87348 14.9445 5.3986 14.9445 5.10571 14.6516L4.14229 13.6882C3.67802 14.1568 3.34308 14.5094 3.10761 14.818C2.81761 15.1981 2.75 15.422 2.75 15.6157C2.75 15.8094 2.81762 16.0334 3.10761 16.4135C3.41081 16.8109 3.87892 17.2812 4.5757 17.978L6.022 19.4243C6.71878 20.1211 7.18914 20.5892 7.58653 20.8924C7.96662 21.1824 8.19057 21.25 8.38426 21.25C8.57795 21.25 8.8019 21.1824 9.18198 20.8924C9.57938 20.5892 10.0497 20.1211 10.7465 19.4243L19.4243 10.7465C20.1211 10.0497 20.5892 9.57938 20.8924 9.18198C21.1824 8.8019 21.25 8.57795 21.25 8.38426C21.25 8.19057 21.1824 7.96662 20.8924 7.58653C20.5892 7.18914 20.1211 6.71878 19.4243 6.022L17.978 4.5757C17.2812 3.87892 16.8109 3.41081 16.4135 3.10761C16.0334 2.81762 15.8094 2.75 15.6157 2.75C15.422 2.75 15.1981 2.81761 14.818 3.10761C14.5094 3.34308 14.1568 3.67802 13.6882 4.14229ZM13.9081 1.91508C14.4217 1.52328 14.9622 1.25 15.6157 1.25C16.2693 1.25 16.8098 1.52328 17.3233 1.91508C17.8104 2.28666 18.3514 2.82777 19.0017 3.47812L20.5219 4.99824C21.1722 5.64856 21.7133 6.18964 22.0849 6.67666C22.4767 7.19017 22.75 7.73073 22.75 8.38426C22.75 9.03779 22.4767 9.57834 22.0849 10.0919C21.7133 10.5789 21.1722 11.12 20.5219 11.7703L11.7703 20.5219C11.12 21.1722 10.5789 21.7133 10.0919 22.0849C9.57834 22.4767 9.03779 22.75 8.38426 22.75C7.73073 22.75 7.19017 22.4767 6.67666 22.0849C6.18964 21.7133 5.64856 21.1722 4.99824 20.5219L3.47812 19.0017C2.82777 18.3514 2.28666 17.8104 1.91508 17.3233C1.52328 16.8098 1.25 16.2693 1.25 15.6157C1.25 14.9622 1.52328 14.4217 1.91508 13.9081C2.28667 13.4211 2.82779 12.88 3.47816 12.2297L12.2297 3.47815C12.88 2.82778 13.4211 2.28666 13.9081 1.91508Z" fill="currentColor"/></svg>
-    </button>
     <button class="tool mode" data-tool="dimension" data-tip="Dimension" aria-label="Dimension" aria-pressed="false">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path d="M9.00999 20.5L3.98999 15.49" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.01001 3.5V20.5" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.99 3.5L20.01 8.51" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.99 20.5V3.5" stroke="currentColor" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
+    <button class="tool" id="geoBtn" data-tip="Geometry" aria-label="Geometry tools" aria-expanded="false" aria-controls="geoFlyout"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><circle cx="18" cy="8" r="4.3333" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></circle><rect x="6.3333" y="14.3333" width="7.3333" height="7.3333" rx="1.3333" ry="1.3333" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></rect><path d="M 5.0907 2.6533 L 1.5853 8.664 c -0.2587 0.444 0.0613 1.0027 0.576 1.0027 H 9.172 c 0.5147 0 0.8347 -0.5587 0.576 -1.0027 L 6.2427 2.6533 c -0.2573 -0.4413 -0.8947 -0.4413 -1.152 0 Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg></button>
     <div class="separator" role="separator"></div>
     <button class="tool" data-tool="undo" data-tip="Undo" aria-label="Undo" disabled>
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.53033 3.46967C7.82322 3.76256 7.82322 4.23744 7.53033 4.53033L5.81066 6.25L15.0358 6.25C15.94 6.24999 16.6693 6.24998 17.2576 6.3033C17.864 6.35826 18.3938 6.47456 18.875 6.75241C19.4451 7.08154 19.9185 7.55492 20.2476 8.12499C20.5254 8.60624 20.6417 9.13604 20.6967 9.74239C20.75 10.3307 20.75 11.06 20.75 11.9643V12.0358C20.75 12.94 20.75 13.6693 20.6967 14.2576C20.6418 14.8639 20.5255 15.3937 20.2476 15.875C19.9185 16.4451 19.4451 16.9185 18.875 17.2476C18.3938 17.5254 17.864 17.6417 17.2576 17.6967C16.6693 17.75 15.94 17.75 15.0358 17.75H8.00001C7.58579 17.75 7.25001 17.4142 7.25001 17C7.25001 16.5858 7.58579 16.25 8.00001 16.25H15C15.9484 16.25 16.6096 16.2493 17.1222 16.2028C17.6245 16.1573 17.9101 16.0726 18.125 15.9486C18.4671 15.7511 18.7511 15.467 18.9486 15.125C19.0726 14.9101 19.1573 14.6245 19.2028 14.1222C19.2493 13.6096 19.25 12.9484 19.25 12C19.25 11.0516 19.2493 10.3904 19.2028 9.87779C19.1573 9.37548 19.0726 9.0899 18.9486 8.87499C18.7511 8.53295 18.467 8.24892 18.125 8.05144C17.9101 7.92737 17.6245 7.84271 17.1222 7.79718C16.6096 7.75072 15.9484 7.75 15 7.75H5.81066L7.53033 9.46967C7.82322 9.76256 7.82322 10.2374 7.53033 10.5303C7.23744 10.8232 6.76256 10.8232 6.46967 10.5303L3.46967 7.53033C3.17678 7.23744 3.17678 6.76256 3.46967 6.46967L6.46967 3.46967C6.76256 3.17678 7.23744 3.17678 7.53033 3.46967Z" fill="currentColor"/></svg>
@@ -165,6 +167,11 @@ input,select{font-size:16px}
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M22.5615 5.64099C23.4636 3.04509 20.9861 0.522263 18.3803 1.44085L3.44476 6.70576C0.578346 7.71619 0.500509 11.7624 3.32388 12.8849L3.3397 12.891L8.29288 14.7318C8.75501 14.9178 9.12031 15.2916 9.2978 15.764L11.222 20.6243C12.3084 23.4996 16.3744 23.4454 17.3839 20.5402L22.5615 5.64099ZM18.8789 2.85553C20.2743 2.36365 21.643 3.71458 21.1447 5.14861L15.9671 20.0478C15.4171 21.6302 13.2126 21.6573 12.6238 20.0902L10.6996 15.2299C10.6224 15.0256 10.5257 14.8311 10.4119 14.6487L14.0303 11.0303C14.3232 10.7374 14.3232 10.2626 14.0303 9.96967C13.7374 9.67678 13.2626 9.67678 12.9697 9.96967L9.34872 13.5906C9.18799 13.4915 9.01788 13.4058 8.83985 13.335L8.82404 13.3289L3.87079 11.4881C2.34161 10.8732 2.38813 8.6687 3.94344 8.12043L18.8789 2.85553Z" fill="currentColor"/></svg>
     </button>
   </nav>
+  <div id="geoFlyout" role="toolbar" aria-label="Geometry tools">
+    <button class="tool mode" data-tool="ruler" data-tip="Ruler" aria-label="Ruler" aria-pressed="false">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="reicon" style="color: currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.6882 4.14229L14.6516 5.10571C14.9445 5.3986 14.9445 5.87348 14.6516 6.16637C14.3588 6.45926 13.8839 6.45926 13.591 6.16637L12.6269 5.20228L11.5662 6.26294L13.2374 7.93414C13.5303 8.22703 13.5303 8.7019 13.2374 8.9948C12.9445 9.28769 12.4697 9.28769 12.1768 8.9948L10.5056 7.3236L9.44492 8.38426L10.409 9.34835C10.7019 9.64124 10.7019 10.1161 10.409 10.409C10.1161 10.7019 9.64124 10.7019 9.34835 10.409L8.38426 9.44492L7.3236 10.5056L8.9948 12.1768C9.28769 12.4697 9.28769 12.9445 8.9948 13.2374C8.7019 13.5303 8.22703 13.5303 7.93414 13.2374L6.26294 11.5662L5.20228 12.6269L6.16637 13.591C6.45926 13.8839 6.45926 14.3588 6.16637 14.6516C5.87348 14.9445 5.3986 14.9445 5.10571 14.6516L4.14229 13.6882C3.67802 14.1568 3.34308 14.5094 3.10761 14.818C2.81761 15.1981 2.75 15.422 2.75 15.6157C2.75 15.8094 2.81762 16.0334 3.10761 16.4135C3.41081 16.8109 3.87892 17.2812 4.5757 17.978L6.022 19.4243C6.71878 20.1211 7.18914 20.5892 7.58653 20.8924C7.96662 21.1824 8.19057 21.25 8.38426 21.25C8.57795 21.25 8.8019 21.1824 9.18198 20.8924C9.57938 20.5892 10.0497 20.1211 10.7465 19.4243L19.4243 10.7465C20.1211 10.0497 20.5892 9.57938 20.8924 9.18198C21.1824 8.8019 21.25 8.57795 21.25 8.38426C21.25 8.19057 21.1824 7.96662 20.8924 7.58653C20.5892 7.18914 20.1211 6.71878 19.4243 6.022L17.978 4.5757C17.2812 3.87892 16.8109 3.41081 16.4135 3.10761C16.0334 2.81762 15.8094 2.75 15.6157 2.75C15.422 2.75 15.1981 2.81761 14.818 3.10761C14.5094 3.34308 14.1568 3.67802 13.6882 4.14229ZM13.9081 1.91508C14.4217 1.52328 14.9622 1.25 15.6157 1.25C16.2693 1.25 16.8098 1.52328 17.3233 1.91508C17.8104 2.28666 18.3514 2.82777 19.0017 3.47812L20.5219 4.99824C21.1722 5.64856 21.7133 6.18964 22.0849 6.67666C22.4767 7.19017 22.75 7.73073 22.75 8.38426C22.75 9.03779 22.4767 9.57834 22.0849 10.0919C21.7133 10.5789 21.1722 11.12 20.5219 11.7703L11.7703 20.5219C11.12 21.1722 10.5789 21.7133 10.0919 22.0849C9.57834 22.4767 9.03779 22.75 8.38426 22.75C7.73073 22.75 7.19017 22.4767 6.67666 22.0849C6.18964 21.7133 5.64856 21.1722 4.99824 20.5219L3.47812 19.0017C2.82777 18.3514 2.28666 17.8104 1.91508 17.3233C1.52328 16.8098 1.25 16.2693 1.25 15.6157C1.25 14.9622 1.52328 14.4217 1.91508 13.9081C2.28667 13.4211 2.82779 12.88 3.47816 12.2297L12.2297 3.47815C12.88 2.82778 13.4211 2.28666 13.9081 1.91508Z" fill="currentColor"/></svg>
+    </button>
+  </div>
 
   <div id="settings">
     <button id="settingsBtn" aria-label="Canvas settings" aria-expanded="false" aria-controls="settingsMenu">
@@ -211,6 +218,7 @@ input,select{font-size:16px}
   const notice = $('notice'), sentBadge = $('sentBadge'), toastEl = $('toast');
   const titleBtn = $('titleBtn'), titlePanel = $('titlePanel'), fieldList = $('fieldList');
   const settingsBtn = $('settingsBtn'), settingsMenu = $('settingsMenu');
+  const geoBtn = $('geoBtn'), geoFlyout = $('geoFlyout');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const ERASE_R = 14;                 // eraser circle radius, CSS px
 
@@ -421,10 +429,12 @@ input,select{font-size:16px}
   function setTool(next) {
     if (['undo', 'redo', 'clear', 'send'].includes(next)) { act(next); return; }
     tool = next; gesture = null; dimFirst = null; dimPreview = null; ruler = null; pointerPos = null;
-    toolbar.querySelectorAll('.mode').forEach(b => {
+    document.querySelectorAll('.mode').forEach(b => {
       const on = b.dataset.tool === tool;
       b.classList.toggle('selected', on); b.setAttribute('aria-pressed', String(on));
     });
+    geoBtn.classList.toggle('selected', !!geoFlyout.querySelector(`[data-tool="${tool}"]`));
+    closeGeo();
     render();
   }
 
@@ -432,6 +442,7 @@ input,select{font-size:16px}
     if (!isInk(e) || modalOpen()) return;
     e.preventDefault(); canvas.setPointerCapture(e.pointerId);
     settingsMenu.classList.remove('open'); settingsBtn.setAttribute('aria-expanded', 'false');
+    closeGeo();
     const p = point(e); pointerPos = p; ruler = null;
     if (tool === 'dimension') {
       if (!dimFirst) { dimFirst = p; showToast('Choose second point'); }
@@ -504,7 +515,12 @@ input,select{font-size:16px}
     if (!strokes.length && !dimensions.length) return;
     change(() => { strokes = []; dimensions = []; });
   };
-  toolbar.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  function closeGeo() { geoFlyout.classList.remove('open'); geoBtn.setAttribute('aria-expanded', 'false'); }
+  geoBtn.onclick = () => {
+    const open = geoFlyout.classList.toggle('open');
+    geoBtn.setAttribute('aria-expanded', String(open));
+  };
 
   // ---------- settings and title block ----------
   settingsBtn.onclick = () => {
@@ -603,7 +619,7 @@ input,select{font-size:16px}
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       overlay.classList.remove('open'); closeDimension();
-      settingsMenu.classList.remove('open'); setTitleOpen(false);
+      settingsMenu.classList.remove('open'); setTitleOpen(false); closeGeo();
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); act(e.shiftKey ? 'redo' : 'undo'); }
   });
