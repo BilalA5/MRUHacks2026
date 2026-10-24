@@ -233,6 +233,8 @@ input,select{font-size:16px}
   const $ = id => document.getElementById(id);
   const canvas = $('drawing');
   let ctx = canvas.getContext('2d');
+  const inkCanvas = document.createElement('canvas'), inkCtx = inkCanvas.getContext('2d');
+  let inkDirty = true;                // true when strokes or dimensions changed since the cache was drawn
   const app = $('app'), hint = $('hint'), toolbar = $('toolbar');
   const dimSheet = $('dimSheet'), dimValue = $('dimValue'), overlay = $('overlay');
   const notice = $('notice'), sentBadge = $('sentBadge'), toastEl = $('toast');
@@ -344,12 +346,12 @@ input,select{font-size:16px}
   const snapshot = () => JSON.parse(JSON.stringify({ strokes, dimensions }));
   function change(fn) {
     const pre = snapshot();
-    fn();
+    fn(); inkDirty = true;
     undoStack.push(pre); if (undoStack.length > 100) undoStack.shift();
     redoStack = [];
     updateButtons(); render();
   }
-  function restore(s) { strokes = s.strokes; dimensions = s.dimensions; updateButtons(); render(); }
+  function restore(s) { strokes = s.strokes; dimensions = s.dimensions; inkDirty = true; updateButtons(); render(); }
   function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
   function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
   function updateButtons() {
@@ -364,6 +366,7 @@ input,select{font-size:16px}
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
     canvas.style.width = r.width + 'px'; canvas.style.height = r.height + 'px';
+    inkCanvas.width = canvas.width; inkCanvas.height = canvas.height; inkDirty = true;
     render();
   }
   function label(text, x, y) {
@@ -377,12 +380,11 @@ input,select{font-size:16px}
     ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalAlpha = alpha;
     if (dash) ctx.setLineDash([12, 4, 3, 4]);
     if (pts.length === 1) { ctx.beginPath(); ctx.arc(pts[0].x, pts[0].y, 1, 0, Math.PI * 2); ctx.fill(); }
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1], b = pts[i];
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-      ctx.lineWidth = fixed || ((a.p && b.p) ? Math.max(1, Math.min(3, (a.p + b.p) * 2)) : 2);
-      ctx.stroke();
-    }
+    // One path per stroke. A call per segment was the main cause of slow pencil input.
+    ctx.lineWidth = fixed || 2;
+    ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
     ctx.restore();
   }
   function drawDimension(d) {
@@ -412,15 +414,21 @@ input,select{font-size:16px}
     label(Math.round(dist(a, b)) + ' mm', (a.x + b.x) / 2, (a.y + b.y) / 2 - 16);
     ctx.restore();
   }
-  function drawContent(transient) {
-    for (const s of strokes) {
-      const st = s.style || MARKERS.fine;
-      drawPolyline(s.points, st.color, s.style ? st.w : null, !!s.dash, st.alpha);
-      if (s.arrow) drawArrowHead(s.points[0], s.points[s.points.length - 1], st);
-      if (s.label) label(s.label.text, s.label.x, s.label.y);
-    }
-    dimensions.forEach(drawDimension);
-    if (!transient) return;
+  // Finished strokes and dimensions, drawn into the cache canvas.
+  function drawInkLayer(target) {
+    const prev = ctx; ctx = target;
+    try {
+      for (const s of strokes) {
+        const st = s.style || MARKERS.fine;
+        drawPolyline(s.points, st.color, s.style ? st.w : null, !!s.dash, st.alpha);
+        if (s.arrow) drawArrowHead(s.points[0], s.points[s.points.length - 1], st);
+        if (s.label) label(s.label.text, s.label.x, s.label.y);
+      }
+      dimensions.forEach(drawDimension);
+    } finally { ctx = prev; }
+  }
+  // Only what is live on screen: the stroke being drawn, previews and pending taps.
+  function drawContent() {
     if (gesture) {
       if (gesture.tool === 'pen') drawPolyline(gesture.points, MARKERS[marker].color, MARKERS[marker].w, false, MARKERS[marker].alpha);
       else if (['line', 'rect', 'circle'].includes(gesture.tool)) { const s = shapeFor(gesture.tool, gesture.start, gesture.cur); if (s) drawPolyline(s.points); }
@@ -462,7 +470,15 @@ input,select{font-size:16px}
       for (let y = .5; y < h; y += 20) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
       ctx.stroke(); ctx.restore();
     }
-    drawContent(true);
+    // Redraw the cache only when content changed; then blit it and add the live layer on top.
+    if (inkDirty) {
+      inkDirty = false;
+      inkCtx.setTransform(dpr, 0, 0, dpr, 0, 0); inkCtx.clearRect(0, 0, w, h);
+      drawInkLayer(inkCtx);
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(inkCanvas, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawContent();
     if (tool === 'eraser' && pointerPos) {
       ctx.save(); ctx.beginPath(); ctx.arc(pointerPos.x, pointerPos.y, ERASE_R, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(31,42,54,.08)'; ctx.fill(); ctx.strokeStyle = '#1F2A36'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
@@ -491,7 +507,7 @@ input,select{font-size:16px}
     const before = strokes.length + dimensions.length;
     strokes = strokes.filter(s => !strokeHit(s, p));
     dimensions = dimensions.filter(d => distToSeg(p, d.a, d.b) > ERASE_R);
-    if (strokes.length + dimensions.length !== before) gesture.changed = true;
+    if (strokes.length + dimensions.length !== before) { gesture.changed = true; inkDirty = true; }
   }
 
   // ---------- tools and toast ----------
@@ -640,17 +656,25 @@ input,select{font-size:16px}
     gesture = { tool, start: p, cur: p, points: [p] };
     render();
   });
+  // Redraw at most once per frame, however many pointer events arrive.
+  let frameQueued = false;
+  function requestRender() {
+    if (frameQueued) return;
+    frameQueued = true;
+    requestAnimationFrame(() => { frameQueued = false; render(); });
+  }
   canvas.addEventListener('pointermove', e => {
     if (!isInk(e)) return;
     const p = point(e); pointerPos = p;
     if (gesture) {
       e.preventDefault();
       if (gesture.tool === 'eraser') eraseAt(p);
-      else if (gesture.tool === 'pen') gesture.points.push(p);
+      // The Pencil reports samples between frames; keep every one so fast writing is not flattened.
+      else if (gesture.tool === 'pen') for (const ev of (e.getCoalescedEvents ? e.getCoalescedEvents() : [e])) gesture.points.push(point(ev));
       else gesture.cur = p;
-      render();
-    } else if (dimFirst && tool === 'dimension') { dimPreview = p; render(); }
-    else if (tool === 'eraser' || poly || angleTaps.length) render();
+      requestRender();
+    } else if (dimFirst && tool === 'dimension') { dimPreview = p; requestRender(); }
+    else if (tool === 'eraser' || poly || angleTaps.length) requestRender();
   });
   function endGesture() {
     if (!gesture) return;
