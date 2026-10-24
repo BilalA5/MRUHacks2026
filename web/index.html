@@ -322,23 +322,38 @@ body{user-select:none;-webkit-user-select:none}
     updateConnection();
     return connected;
   }
-  function send(){
-    if(!connected||sending){if(!connected)showToast('Connect to the laptop to send.');return}
-    sending=true;const btn=toolbar.querySelector('[data-tool="send"]');btn.disabled=true;
+  const SEND_ICON='<svg viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>';
+  async function send(){
+    if(sending)return;
+    if(!strokes.length&&!dimensions.length){showToast('Draw something first');return}
+    if(!connected){showToast('Connect to the laptop to send.');return}
+    sending=true;const btn=toolbar.querySelector('[data-tool="send"]');
     btn.innerHTML='<svg viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="8" stroke-dasharray="32 18"/></svg>';btn.setAttribute('aria-label','Sending…');
-    notice.classList.remove('visible');sentBadge.classList.remove('show');
-    // Demo transport: replace this timeout with your laptop/WebSocket endpoint.
-    setTimeout(()=>{
-      sending=false;btn.disabled=!connected;
-      btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>';
-      btn.setAttribute('aria-label','Send drawing to laptop');
-      if(connected){
-        drawingNo++;document.getElementById('drawingNo').textContent='DWG-'+String(drawingNo).padStart(3,'0');
-        sentBadge.classList.add('show');clearTimeout(sentTimer);sentTimer=setTimeout(()=>sentBadge.classList.remove('show'),2000);
-      }else{notice.classList.add('visible')}
-    },750);
+    notice.classList.remove('visible');sentBadge.classList.remove('show');updateConnection();
+    const payload={
+      png:exportPng(),
+      strokes:[...strokes,...dimensions.map(d=>({kind:'dim',a:d.a,b:d.b,value:d.value}))],
+      meta:{
+        part:document.getElementById('partName').value,
+        drawingNo:'DWG-'+String(drawingNo).padStart(3,'0'),
+        scale:document.getElementById('scale').value,
+        drawnBy:drawnBy.value,
+        date:document.getElementById('date').textContent
+      }
+    };
+    try{
+      const r=await fetch('/api/sketch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      drawingNo++;document.getElementById('drawingNo').textContent='DWG-'+String(drawingNo).padStart(3,'0');
+      sentBadge.classList.add('show');clearTimeout(sentTimer);sentTimer=setTimeout(()=>sentBadge.classList.remove('show'),2000);
+    }catch(err){
+      notice.classList.add('visible');
+      await checkConnection();
+    }finally{
+      sending=false;btn.innerHTML=SEND_ICON;btn.setAttribute('aria-label','Send drawing to laptop');updateConnection();
+    }
   }
-  document.getElementById('retry').onclick=()=>send();
+  document.getElementById('retry').onclick=async()=>{if(await checkConnection())send()};
   document.getElementById('date').textContent=new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'2-digit'}).format(new Date());
   const savedName=localStorage.getItem('draft-drawn-by');const drawnBy=document.getElementById('drawnBy');
   if(savedName)drawnBy.value=savedName;
