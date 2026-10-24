@@ -3,7 +3,7 @@
 // the title block, engineering quick tools, and the Send button.
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Excalidraw, exportToBlob, convertToExcalidrawElements } from "@excalidraw/excalidraw";
+import { Excalidraw, exportToBlob, convertToExcalidrawElements as toElements } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 
 const PAPER = "#FBFBF7";        // drawing paper
@@ -12,6 +12,10 @@ const BLUE = "#2563EB";         // dimensions and centre lines
 const GRID = 20;                // grid cell in scene px
 const MM_PER_PX = 0.25;         // calibration: one 20 px grid cell = 5 mm. Change here to recalibrate.
 const SHEET = { x: 0, y: 0, w: 1123, h: 794 };   // A4 landscape at 96 dpi
+
+// Engineering drawings use straight lines and a clean font, not Excalidraw's hand-sketched style.
+const CLEAN = { roughness: 0, fontFamily: 2 };   // font 2 = Helvetica-style
+const convertToExcalidrawElements = skeletons => toElements(skeletons.map(s => ({ ...CLEAN, ...s })));
 
 const blobToDataUrl = blob => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -157,6 +161,8 @@ function App() {
             gridSize: GRID,
             currentItemStrokeColor: INK,
             currentItemStrokeWidth: 1.5,
+            currentItemRoughness: 0,
+            currentItemFontFamily: 2,
           },
         }}
         UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false, changeViewBackgroundColor: false, clearCanvas: true } }}
