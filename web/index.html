@@ -11,7 +11,6 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .board{position:fixed;inset:0}
 /* Keep Excalidraw's core toolbar and zoom; hide the extras (library, menu, help, hints, welcome) */
 .default-sidebar-trigger,.main-menu-trigger,.help-icon,.HintViewer,.welcome-screen-center{display:none!important}
-.eng-msg{font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#3B4650;padding:0 6px;white-space:nowrap}
 /* Excalidraw's own undo and redo move to the top right, together */
 .undo-redo-buttons{position:fixed!important;top:calc(16px + env(safe-area-inset-top,0px));right:16px;left:auto!important;bottom:auto!important;z-index:10;display:flex;gap:6px}
 .undo-button-container,.redo-button-container{position:static!important}
@@ -25,9 +24,14 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-side button.on{background:#EAF0FF}
 .eng-side .ico{display:inline-flex;width:20px;height:20px;flex:none;color:#2563EB}
 .eng-side .ico svg{width:20px;height:20px}
-.eng-msg{margin:8px 8px 2px;font:12px -apple-system,BlinkMacSystemFont,sans-serif;color:#3B4650}
 @media (hover:hover) and (pointer:fine){.eng-side button:hover{background:#f0f3f6}.eng-side button.on:hover{background:#dfe8ff}}
 @media (prefers-reduced-motion:reduce){.eng-side button{transition:none}}
+/* Status toast: shows what an engineering tool did, or why it could not run */
+.eng-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:10px;max-width:min(440px,calc(100vw - 32px));padding:11px 16px;border-radius:12px;background:#1F2A36;color:#fff;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 10px 30px #1f2a3640;pointer-events:none;animation:eng-toast-in 220ms cubic-bezier(.23,1,.32,1) both}
+.eng-toast::before{content:"";width:8px;height:8px;border-radius:50%;background:#4ade80;flex:none}
+.eng-toast.warn::before{background:#f59e0b}
+@keyframes eng-toast-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+@media (prefers-reduced-motion:reduce){.eng-toast{animation:none}}
 </style>
 </head>
 <body>

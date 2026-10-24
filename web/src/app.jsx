@@ -1,6 +1,6 @@
 // Engineering board built on Excalidraw (MIT, https://github.com/excalidraw/excalidraw).
 // Excalidraw supplies the canvas, tools and undo. This file adds a sidebar of engineering tools.
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Excalidraw, convertToExcalidrawElements as toElements } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
@@ -94,7 +94,7 @@ function centreLine(api, flash) {
 // Centre mark: a small cross at the centre of each selected circle or rectangle.
 function centreMark(api, flash) {
   const shapes = selectedOfType(api, ["ellipse", "rectangle"]);
-  if (!shapes.length) return flash("Select a circle or rectangle first");
+  if (!shapes.length) return flash("Select a circle or rectangle first", "warn");
   const els = [];
   for (const el of shapes) {
     const cx = el.x + el.width / 2, cy = el.y + el.height / 2;
@@ -110,11 +110,11 @@ function centreMark(api, flash) {
 // Mirror: reflect the selected lines, arrows, rectangles and ellipses across the selected dashed centre line.
 function mirror(api, flash) {
   const axis = selected(api).find(el => el.type === "line" && el.strokeStyle === "dashed");
-  if (!axis) return flash("Select a dashed centre line and the shapes to mirror");
+  if (!axis) return flash("Select a dashed centre line and the shapes to mirror", "warn");
   const [a, b] = endsOf(axis);
   const d = { x: b.x - a.x, y: b.y - a.y };
   const targets = selected(api).filter(el => el !== axis && ["line", "arrow", "rectangle", "ellipse"].includes(el.type));
-  if (!targets.length) return flash("Select the shapes to mirror as well");
+  if (!targets.length) return flash("Select the shapes to mirror as well", "warn");
   const made = targets.map(el => {
     const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth };
     if (el.type === "line" || el.type === "arrow") {
@@ -137,7 +137,7 @@ function mirror(api, flash) {
 // Dimension: a dimension line with ticks and the length in mm, offset from each selected line.
 function dimension(api, flash) {
   const lines = selectedOfType(api, ["line", "arrow"]);
-  if (!lines.length) return flash("Select a line first");
+  if (!lines.length) return flash("Select a line first", "warn");
   const els = [];
   for (const el of lines) {
     const [p1, p2] = endsOf(el);
@@ -153,7 +153,7 @@ function dimension(api, flash) {
       { type: "text", x: mid.x - 22, y: mid.y - 22, text: `${mm} mm`, fontSize: 14, strokeColor: BLUE },
     ]));
   }
-  if (!els.length) return flash("Selected line has no length");
+  if (!els.length) return flash("Selected line has no length", "warn");
   api.updateScene({ elements: [...api.getSceneElements(), ...els] });
   flash("Dimension added");
 }
@@ -161,7 +161,7 @@ function dimension(api, flash) {
 // Diameter: a leader and "Ø mm" label on each selected circle.
 function diameter(api, flash) {
   const circles = selectedOfType(api, ["ellipse"]).filter(el => Math.abs(el.width - el.height) < 1);
-  if (!circles.length) return flash("Select a circle first");
+  if (!circles.length) return flash("Select a circle first", "warn");
   const els = [];
   for (const el of circles) {
     const r = el.width / 2, cx = el.x + r, cy = el.y + r;
@@ -181,7 +181,7 @@ function diameter(api, flash) {
 function hatch(api, flash) {
   const ids = api.getAppState().selectedElementIds;
   const shapes = api.getSceneElements().filter(el => ids[el.id] && ["rectangle", "ellipse", "diamond"].includes(el.type));
-  if (!shapes.length) return flash("Select a rectangle, ellipse or diamond first");
+  if (!shapes.length) return flash("Select a rectangle, ellipse or diamond first", "warn");
   api.updateScene({
     elements: api.getSceneElements().map(el => ids[el.id] && ["rectangle", "ellipse", "diamond"].includes(el.type)
       ? { ...el, fillStyle: "hachure", backgroundColor: "#DDE3EE", version: el.version + 1, versionNonce: rnd() }
@@ -194,7 +194,7 @@ function hatch(api, flash) {
 // and each end joins an existing line end within 10 px.
 function constrain(api, flash) {
   const sel = selectedOfType(api, ["line", "arrow"]);
-  if (!sel.length) return flash("Select a line first");
+  if (!sel.length) return flash("Select a line first", "warn");
   const ids = new Set(sel.map(el => el.id));
   const anchors = api.getSceneElements()
     .filter(el => !el.isDeleted && !ids.has(el.id) && (el.type === "line" || el.type === "arrow"))
@@ -233,7 +233,7 @@ function offset(api, flash) {
       out.push(...convertToExcalidrawElements([{ type: "line", x: p1.x + nx, y: p1.y + ny, points: [[0, 0], [dx, dy]], strokeColor: el.strokeColor, strokeWidth: el.strokeWidth }]));
     }
   }
-  if (!out.length) return flash("Select a line or rectangle first");
+  if (!out.length) return flash("Select a line or rectangle first", "warn");
   api.updateScene({ elements: [...api.getSceneElements(), ...out] });
   flash("Offset copy added");
 }
@@ -276,15 +276,17 @@ const SECTIONS = [
 function App() {
   const [api, setApi] = useState(null);
   const [gridOn, setGridOn] = useState(true);
-  const [message, setMessage] = useState("");
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
 
   // Debug handle: lets the browser console inspect and drive the board.
   useEffect(() => { window.board = api; }, [api]);
 
-  const flash = text => {
-    setMessage(text);
-    clearTimeout(flash.timer);
-    flash.timer = setTimeout(() => setMessage(""), 2600);
+  // Every tool reports through here. kind is "ok" or "warn" (the tool could not run).
+  const flash = (text, kind = "ok") => {
+    setToast({ id: Date.now(), text, kind });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2800);
   };
 
   const run = (item) => {
@@ -330,8 +332,8 @@ function App() {
             })}
           </section>
         ))}
-        {message && <p className="eng-msg" role="status">{message}</p>}
       </aside>
+      {toast && <div key={toast.id} className={"eng-toast " + toast.kind} role="status" aria-live="polite">{toast.text}</div>}
     </div>
   );
 }
