@@ -155,7 +155,8 @@ body{user-select:none;-webkit-user-select:none}
 </div>
 <script>
 (() => {
-  const canvas=document.getElementById('drawing'),ctx=canvas.getContext('2d');
+  const canvas=document.getElementById('drawing');
+  let ctx=canvas.getContext('2d');
   const app=document.getElementById('app'), hint=document.getElementById('hint');
   const toolbar=document.getElementById('toolbar'), dimSheet=document.getElementById('dimSheet');
   const dimValue=document.getElementById('dimValue'), overlay=document.getElementById('overlay');
@@ -195,16 +196,32 @@ body{user-select:none;-webkit-user-select:none}
       for(let x=0.5;x<w;x+=20){ctx.moveTo(x,0);ctx.lineTo(x,h)}
       for(let y=0.5;y<h;y+=20){ctx.moveTo(0,y);ctx.lineTo(w,y)}
       ctx.stroke();ctx.restore();}
-    for(const s of strokes){if(s.points.length<1)continue;ctx.save();ctx.strokeStyle='#1F2A36';ctx.lineCap='round';ctx.lineJoin='round';
-      if(s.points.length===1){ctx.beginPath();ctx.arc(s.points[0].x,s.points[0].y,1,0,Math.PI*2);ctx.fillStyle='#1F2A36';ctx.fill()}
-      else{ctx.beginPath();ctx.moveTo(s.points[0].x,s.points[0].y);for(let i=1;i<s.points.length;i++)ctx.lineTo(s.points[i].x,s.points[i].y);
-        // Per-segment pressure width when available.
-        for(let i=1;i<s.points.length;i++){const a=s.points[i-1],b=s.points[i];ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineWidth=(a.p&&b.p)?Math.max(1,Math.min(3,(a.p+b.p)*2)):2;ctx.stroke();}
-      }ctx.restore();}
+    drawContent(true);
+  }
+  function drawContent(transient){
+    for(const s of strokes){
+      if(!s.points.length)continue;
+      ctx.save();ctx.strokeStyle='#1F2A36';ctx.fillStyle='#1F2A36';ctx.lineCap='round';ctx.lineJoin='round';
+      if(s.points.length===1){ctx.beginPath();ctx.arc(s.points[0].x,s.points[0].y,1,0,Math.PI*2);ctx.fill()}
+      // Pressure sets the width per segment when the device reports it.
+      for(let i=1;i<s.points.length;i++){const a=s.points[i-1],b=s.points[i];ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineWidth=(a.p&&b.p)?Math.max(1,Math.min(3,(a.p+b.p)*2)):2;ctx.stroke()}
+      ctx.restore();
+    }
     dimensions.forEach(d=>drawDimension(d));
+    if(!transient)return;
     if(active&&active.points.length){const s=active;ctx.save();ctx.strokeStyle='#1F2A36';ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(s.points[0].x,s.points[0].y);s.points.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.stroke();ctx.restore();}
     if(dimFirst){ctx.save();ctx.strokeStyle='#2563EB';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(dimFirst.x-8,dimFirst.y);ctx.lineTo(dimFirst.x+8,dimFirst.y);ctx.moveTo(dimFirst.x,dimFirst.y-8);ctx.lineTo(dimFirst.x,dimFirst.y+8);ctx.stroke();ctx.restore();}
     if(dimPreview)drawDimension({a:dimFirst,b:dimPreview,value:null},true);
+  }
+  // Strokes and dimensions only, on white, with no grid or title block. This is what the model sees.
+  function exportPng(){
+    const off=document.createElement('canvas');off.width=canvas.width;off.height=canvas.height;
+    const prev=ctx;ctx=off.getContext('2d');
+    try{
+      ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,canvas.width/dpr,canvas.height/dpr);
+      drawContent(false);
+    }finally{ctx=prev}
+    return off.toDataURL('image/png');
   }
   function showToast(text){const t=document.getElementById('toast');t.textContent=text;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),300)}
   function setTool(next){
