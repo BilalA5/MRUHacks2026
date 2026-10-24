@@ -1,9 +1,8 @@
 // Engineering board built on Excalidraw (MIT, https://github.com/excalidraw/excalidraw).
-// Excalidraw supplies the canvas, tools and undo. This file adds the drawing sheet, the grid,
-// the title block, engineering quick tools, and the Send button.
-import React, { useEffect, useState } from "react";
+// Excalidraw supplies the canvas, tools and undo. This file adds the grid and the engineering tools.
+import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Excalidraw, exportToBlob, convertToExcalidrawElements as toElements } from "@excalidraw/excalidraw";
+import { Excalidraw, convertToExcalidrawElements as toElements } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 
 const PAPER = "#FBFBF7";        // drawing paper
@@ -11,46 +10,15 @@ const INK = "#1F2A36";          // graphite lines
 const BLUE = "#2563EB";         // dimensions and centre lines
 const GRID = 20;                // grid cell in scene px
 const MM_PER_PX = 0.25;         // calibration: one 20 px grid cell = 5 mm. Change here to recalibrate.
-const SHEET = { x: 0, y: 0, w: 1123, h: 794 };   // A4 landscape at 96 dpi
 
 // Engineering drawings use straight lines and a clean font, not Excalidraw's hand-sketched style.
 const CLEAN = { roughness: 0, fontFamily: 2 };   // font 2 = Helvetica-style
 const convertToExcalidrawElements = skeletons => toElements(skeletons.map(s => ({ ...CLEAN, ...s })));
 
-const blobToDataUrl = blob => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(reader.result);
-  reader.onerror = reject;
-  reader.readAsDataURL(blob);
-});
-
 // Centre of what is on screen, in scene coordinates.
 function screenCentre(api) {
   const s = api.getAppState();
   return { x: -s.scrollX + s.width / (2 * s.zoom.value), y: -s.scrollY + s.height / (2 * s.zoom.value) };
-}
-
-function sheetElements() {
-  return convertToExcalidrawElements([
-    { type: "rectangle", x: SHEET.x, y: SHEET.y, width: SHEET.w, height: SHEET.h, strokeColor: INK, strokeWidth: 1.5, backgroundColor: "transparent" },
-  ]);
-}
-
-// Title block in the bottom-right corner of the sheet: Part, Drawing no., Drawn by, Date.
-function titleBlockElements() {
-  const w = 320, h = 110;
-  const x = SHEET.x + SHEET.w - w - 24, y = SHEET.y + SHEET.h - h - 24;
-  const label = (text, dx, dy) => ({ type: "text", x: x + dx, y: y + dy, text, fontSize: 12, strokeColor: "#65717C" });
-  return convertToExcalidrawElements([
-    { type: "rectangle", x, y, width: w, height: h, strokeColor: INK, strokeWidth: 1, backgroundColor: "transparent" },
-    { type: "line", x, y: y + 36, points: [[0, 0], [w, 0]], strokeColor: INK, strokeWidth: 1 },
-    { type: "line", x, y: y + 73, points: [[0, 0], [w, 0]], strokeColor: INK, strokeWidth: 1 },
-    { type: "line", x: x + 200, y, points: [[0, 0], [0, h]], strokeColor: INK, strokeWidth: 1 },
-    label("Part", 8, 6),
-    label("Drawing no.", 208, 6),
-    label("Drawn by", 8, 43),
-    label("Date", 208, 43),
-  ].map(el => el.type === "text" ? { ...el } : el));
 }
 
 // DXF export: lines, arrows, rectangles, ellipses and text, in mm with Y up.
@@ -92,12 +60,6 @@ function App() {
     setMessage(text);
     setTimeout(() => setMessage(""), 2200);
   };
-
-  // Put the sheet and title block on an empty board, once.
-  useEffect(() => {
-    if (!api || api.getSceneElements().length) return;
-    api.updateScene({ elements: [...sheetElements(), ...titleBlockElements()] });
-  }, [api]);
 
   // Adds elements to the scene and keeps existing ones as they are.
   const addElements = els => api.updateScene({ elements: [...api.getSceneElements(), ...els] });
@@ -224,30 +186,6 @@ function App() {
     api.updateScene({ appState: { gridModeEnabled: on } });
   };
 
-  const send = async () => {
-    if (!api) return;
-    const elements = api.getSceneElements().filter(el => !el.isDeleted);
-    if (!elements.length) return flash("Draw something first");
-    flash("Sending…");
-    try {
-      const blob = await exportToBlob({
-        elements,
-        files: api.getFiles(),
-        appState: { exportBackground: true, viewBackgroundColor: PAPER },
-        mimeType: "image/png",
-      });
-      const res = await fetch("/api/sketch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ png: await blobToDataUrl(blob), strokes: elements }),
-      });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      flash("Sent to laptop");
-    } catch (err) {
-      flash("Could not reach laptop. Check Wi-Fi and try again.");
-    }
-  };
-
   return (
     <div className="board">
       <Excalidraw
@@ -273,10 +211,7 @@ function App() {
         <button onClick={offset}>Offset</button>
         <button onClick={exportDxf}>Export DXF</button>
         <button className={gridOn ? "on" : ""} onClick={toggleGrid} aria-pressed={gridOn}>Snap grid</button>
-      </div>
-      <div className="send-bar">
-        {message && <span className="send-msg" role="status">{message}</span>}
-        <button className="send-btn" onClick={send} disabled={!api}>Send</button>
+        {message && <span className="eng-msg" role="status">{message}</span>}
       </div>
     </div>
   );
