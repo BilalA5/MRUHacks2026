@@ -272,3 +272,64 @@ body{user-select:none;-webkit-user-select:none}
     const v=parseFloat(dimValue.value);if(!Number.isFinite(v)||v<0){dimValue.focus();return}
     dimensions.push({a:dimFirst,b:dimPreview,value:v});redoStack=[];closeDimension();updateUndo();
   };
+  function act(which){
+    if(which==='undo'){
+      if(dimensions.length)redoStack.push({type:'dimension',item:dimensions.pop()});
+      else if(strokes.length)redoStack.push({type:'stroke',item:strokes.pop()});
+    }else if(which==='redo'){
+      const item=redoStack.pop();if(item){if(item.type==='dimension')dimensions.push(item.item);else strokes.push(item.item)}
+    }else if(which==='clear'){overlay.classList.add('open');document.getElementById('clearCancel').focus()}
+    else if(which==='send')send();
+    updateUndo();render();
+  }
+  document.getElementById('clearCancel').onclick=()=>overlay.classList.remove('open');
+  document.getElementById('clearConfirm').onclick=()=>{strokes=[];dimensions=[];redoStack=[];active=null;overlay.classList.remove('open');hint.classList.remove('hidden');updateUndo();render()};
+  toolbar.querySelectorAll('[data-tool]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.tool)));
+  document.getElementById('settingsBtn').onclick=()=>{
+    const menu=document.getElementById('settingsMenu');menu.classList.toggle('open');
+    document.getElementById('settingsBtn').setAttribute('aria-expanded',String(menu.classList.contains('open')));
+  };
+  gridToggle.onchange=()=>{grid=gridToggle.checked;render()};
+  snapToggle.onchange=()=>snap=snapToggle.checked;
+  document.getElementById('connectionToggle').onchange=e=>{connected=e.target.checked;updateConnection()};
+  function updateConnection(){
+    document.getElementById('statusDot').style.background=connected?'#2f9b69':'#B42318';
+    document.getElementById('statusText').textContent=connected?'Laptop connected':'Laptop disconnected';
+    const sendBtn=toolbar.querySelector('[data-tool="send"]');sendBtn.disabled=!connected||sending;
+    if(!connected){notice.classList.remove('visible');showToast('Connect to the laptop to send.')}
+    render();
+  }
+  function send(){
+    if(!connected||sending){if(!connected)showToast('Connect to the laptop to send.');return}
+    sending=true;const btn=toolbar.querySelector('[data-tool="send"]');btn.disabled=true;
+    btn.innerHTML='<svg viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="8" stroke-dasharray="32 18"/></svg>';btn.setAttribute('aria-label','Sending…');
+    notice.classList.remove('visible');sentBadge.classList.remove('show');
+    // Demo transport: replace this timeout with your laptop/WebSocket endpoint.
+    setTimeout(()=>{
+      sending=false;btn.disabled=!connected;
+      btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>';
+      btn.setAttribute('aria-label','Send drawing to laptop');
+      if(connected){
+        drawingNo++;document.getElementById('drawingNo').textContent='DWG-'+String(drawingNo).padStart(3,'0');
+        sentBadge.classList.add('show');clearTimeout(sentTimer);sentTimer=setTimeout(()=>sentBadge.classList.remove('show'),2000);
+      }else{notice.classList.add('visible')}
+    },750);
+  }
+  document.getElementById('retry').onclick=()=>send();
+  document.getElementById('date').textContent=new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'2-digit'}).format(new Date());
+  const savedName=localStorage.getItem('draft-drawn-by');const drawnBy=document.getElementById('drawnBy');
+  if(savedName)drawnBy.value=savedName;
+  drawnBy.addEventListener('change',()=>localStorage.setItem('draft-drawn-by',drawnBy.value));
+  document.getElementById('partName').addEventListener('pointerdown',e=>e.stopPropagation());
+  document.getElementById('drawnBy').addEventListener('pointerdown',e=>e.stopPropagation());
+  document.getElementById('scale').addEventListener('pointerdown',e=>e.stopPropagation());
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){overlay.classList.remove('open');closeDimension();document.getElementById('settingsMenu').classList.remove('open')}
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();act(e.shiftKey?'redo':'undo')}
+  });
+  const style=document.createElement('style');style.textContent='@keyframes spin{to{transform:rotate(360deg)}}';document.head.appendChild(style);
+  window.addEventListener('resize',resize);resize();updateUndo();updateConnection();
+})();
+</script>
+</body>
+</html>
