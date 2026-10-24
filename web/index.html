@@ -30,16 +30,18 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-sheet{display:flex;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid #edf0f3}
 .eng-sheet button{flex:1;justify-content:center;gap:6px;min-height:40px;padding:0 6px;font-size:13px;color:#5b6772}
 /* Status toast: shows what an engineering tool did, or why it could not run */
-.eng-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:10px;max-width:min(440px,calc(100vw - 32px));padding:11px 16px;border-radius:12px;background:#1F2A36;color:#fff;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 10px 30px #1f2a3640;pointer-events:none;animation:eng-toast-in 220ms cubic-bezier(.23,1,.32,1) both}
-.eng-toast::before{content:"";width:8px;height:8px;border-radius:50%;background:#4ade80;flex:none}
-.eng-toast.warn::before{background:#f59e0b}
+.eng-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:12px;max-width:min(440px,calc(100vw - 32px));padding:10px 16px;border:1px solid #e3e7eb;border-radius:12px;background:#fff;color:#1F2A36;font:500 14px/1.35 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 8px 24px #1f2a3614;pointer-events:none;animation:eng-toast-in 200ms cubic-bezier(.23,1,.32,1) both}
+.eng-toast.warn{background:#FFFAEB;border-color:#F3DFA8;color:#7A4A06}
+.eng-toast.leaving{animation:eng-toast-out 150ms cubic-bezier(.23,1,.32,1) both}
 .eng-toast.sticky{pointer-events:auto;padding:6px 6px 6px 16px}
-.eng-toast button{min-height:36px;padding:0 14px;border:0;border-radius:8px;background:#ffffff1f;color:#fff;font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer}
-.eng-toast button:active{background:#ffffff33}
+.eng-toast button{min-height:36px;padding:0 14px;border:0;border-radius:8px;background:#f0f3f6;color:#1F2A36;font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;transition:transform 160ms cubic-bezier(.23,1,.32,1)}
+.eng-toast button:active{transform:scale(.97)}
 /* First-run hint while the sheet is empty */
 .eng-hint{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:5;max-width:min(460px,calc(100vw - 32px));color:#7b8794;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none}
 @keyframes eng-toast-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
-@media (prefers-reduced-motion:reduce){.eng-toast{animation:none}}
+@keyframes eng-toast-out{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,4px)}}
+@keyframes eng-toast-fade{to{opacity:0}}
+@media (prefers-reduced-motion:reduce){.eng-toast{animation:none}.eng-toast.leaving{animation:eng-toast-fade 150ms ease-out both}}
 /* Depth dialog for Mark profile */
 .eng-dialog-wrap{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(31,42,54,.17);padding:24px}
 .eng-dialog{width:min(380px,100%);max-height:calc(100% - 24px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding:20px;background:#fff;border:1px solid #e8ebee;border-radius:14px;box-shadow:0 18px 60px #1f2a362b;font:14px -apple-system,BlinkMacSystemFont,sans-serif;color:#1F2A36;animation:eng-dialog-in 200ms cubic-bezier(.23,1,.32,1) both}
