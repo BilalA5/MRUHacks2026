@@ -901,7 +901,6 @@ function App() {
   const [gridOn, setGridOn] = useState(true);
   const [empty, setEmpty] = useState(true);       // nothing drawn yet: show how to start
   const [link, setLink] = useState({ state: "offline", text: "Connecting" });   // whether the laptop has the latest drawing
-  const [building, setBuilding] = useState(false);
   const bridgeRef = useRef(null);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -915,9 +914,9 @@ function App() {
   const pressAt = useRef(null);            // where and when the current pen press went still
 
   // Every tool reports through here. kind is "ok" or "warn" (the tool could not run).
-  // A sticky toast stays until replaced and offers Cancel: onCancel, or by default the tool waiting for a tap.
-  const flash = (text, kind = "ok", sticky = false, onCancel = null) => {
-    setToast({ id: Date.now(), text, kind, sticky, onCancel });
+  // A sticky toast stays until replaced and offers Cancel for the tool waiting for a tap.
+  const flash = (text, kind = "ok", sticky = false) => {
+    setToast({ id: Date.now(), text, kind, sticky });
     clearTimeout(toastTimer.current);
     if (!sticky) toastTimer.current = setTimeout(() => setToast(t => t && { ...t, leaving: true }), 2800);
   };
@@ -1247,27 +1246,12 @@ function App() {
   // The bridge streams the drawing to the laptop while the user draws (bridge.js).
   useEffect(() => {
     if (!api) return;
-    const bridge = createBridge({ api, partOf: partSketch, onStatus: setLink });
+    // A part is ready for the AI once it has at least one marked profile.
+    const bridge = createBridge({ api, partOf: partSketch, ready: part => part.features?.length > 0, onStatus: setLink,
+      onBuildError: message => flash(`Could not send to the AI: ${message}`, "warn") });
     bridgeRef.current = window.bridge = bridge;
     return () => bridge.stop();
   }, [api]);
-
-  // Build: send the drawing as it is now to the AI, once the laptop has it.
-  const buildPart = async () => {
-    const bridge = bridgeRef.current;
-    if (!bridge || building) return;
-    if (!live(api).length) return flash("Draw the part first", "warn");
-    if (pickingRef.current) setPick(null);
-    setBuilding(true);
-    try {
-      const id = await bridge.build(() => flash("Waiting for laptop…", "ok", true, () => bridge.cancelBuild()));
-      flash(`Sent to AI (${id})`);
-    } catch (e) {
-      flash(e.message, "warn");
-    } finally {
-      setBuilding(false);
-    }
-  };
 
   // A tool works on the selection when that fits, otherwise it waits for a tap. Tapping it again cancels.
   const run = (item) => {
@@ -1336,7 +1320,6 @@ function App() {
         </div>
         <div className="eng-send">
           <p className={"eng-link " + link.state} role="status" aria-live="polite">{link.text}</p>
-          <button className="eng-build" onClick={buildPart} disabled={building}>{building ? "Sending…" : "Build part"}</button>
         </div>
       </aside>
 
@@ -1420,7 +1403,7 @@ function App() {
         <div key={toast.id} className={"eng-toast " + toast.kind + (toast.sticky ? " sticky" : "") + (toast.leaving ? " leaving" : "")}
           role="status" aria-live="polite" onAnimationEnd={() => toast.leaving && setToast(null)}>
           <span>{toast.text}</span>
-          {toast.sticky && <button type="button" onClick={toast.onCancel || (() => setPick(null))}>Cancel</button>}
+          {toast.sticky && <button type="button" onClick={() => setPick(null)}>Cancel</button>}
         </div>
       ) : empty && !dialog && (
         <div className="eng-hint">Draw the part's outline with the Pencil. Hold still at the end of a stroke to snap it straight.</div>

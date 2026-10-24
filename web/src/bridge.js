@@ -10,6 +10,7 @@ const QUIET_MS = 250;         // send this long after the last change...
 const MAX_WAIT_MS = 1000;     // ...but never later than this while the user keeps drawing
 const SLOW_BYTES = 500000;    // a snapshot this big slows sending to one a second, to spare the hotspot
 const BACKOFF_MS = [500, 1000, 2000, 4000];
+const BUILD_IDLE_MS = 3000;   // a build goes to the AI once the laptop has the drawing and nothing has changed for this long
 
 const newSession = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -36,7 +37,9 @@ async function post(path, body) {
 
 // api: the Excalidraw API. partOf(elements): the part in mm (partSketch).
 // onStatus({ state: "live" | "syncing" | "offline" | "error", waiting, text }) runs whenever the link changes.
-export function createBridge({ api, partOf, onStatus }) {
+// Builds are detected, not asked for: when ready(part) holds, the part differs from the last one built and the
+// user has paused, the drawing goes to the AI by itself. onBuildError(message) reports a build that failed.
+export function createBridge({ api, partOf, ready, onStatus, onBuildError }) {
   const session = newSession();
   let seq = 0;               // the newest snapshot made
   let acked = 0;             // the newest snapshot the laptop has confirmed
@@ -52,14 +55,18 @@ export function createBridge({ api, partOf, onStatus }) {
   let slow = false;
   const ackWaiters = [];
   let stopped = false;
+  let idleTimer = null;      // waits out BUILD_IDLE_MS before a detected build
+  let builtKey = null;       // the part last sent to the AI
+  let lastBuild = null;      // its build id
 
   const status = () => {
     const waiting = seq - acked;
     let state, text;
     if (error) { state = "error"; text = `Laptop refused: ${error}`; }
     else if (!reachable) { state = "offline"; text = waiting ? `Offline · ${waiting} change${waiting > 1 ? "s" : ""} waiting` : "Offline"; }
+    else if (building) { state = "syncing"; text = "Sending to AI"; }
     else if (waiting || inFlight || timer) { state = "syncing"; text = "Syncing"; }
-    else { state = "live"; text = "Live"; }
+    else { state = "live"; text = lastBuild ? `Live · AI has ${lastBuild}` : "Live"; }
     onStatus?.({ state, waiting, text });
   };
 
@@ -110,7 +117,29 @@ export function createBridge({ api, partOf, onStatus }) {
     }
     inFlight = null;
     while (ackWaiters.length && acked >= ackWaiters[0].seq) ackWaiters.shift().resolve();
+    if (acked === seq && !timer) scheduleBuild();
     pump();
+  }
+
+  // The part as the AI sees it. Moving the whole drawing or adding stray sketch lines leaves it alone.
+  const partKey = part => JSON.stringify([part.features, part.dimensions, part.notes]);
+
+  // Detected build: once everything is delivered, wait for a pause, then send the part if it is ready and new.
+  function scheduleBuild() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(async () => {
+      idleTimer = null;
+      const snap = lastSnap;
+      if (!snap || timer || pending || inFlight || building || acked < snap.seq) return;
+      if (!ready?.(snap.part) || partKey(snap.part) === builtKey) return;
+      try {
+        lastBuild = await build();
+        builtKey = partKey(snap.part);
+      } catch (e) {
+        if (e.message !== "Build cancelled") onBuildError?.(e.message);
+      }
+      status();
+    }, BUILD_IDLE_MS);
   }
 
   // Every board change. Panning and zooming leave the version alone and send nothing.
@@ -118,6 +147,7 @@ export function createBridge({ api, partOf, onStatus }) {
     const v = sceneVersion(elements);
     if (v === version) return;
     version = v;
+    clearTimeout(idleTimer);   // still drawing: no build yet
     const now = Date.now();
     firstChange = firstChange ?? now;
     clearTimeout(timer);
@@ -143,6 +173,7 @@ export function createBridge({ api, partOf, onStatus }) {
     if (building) throw new Error("Already sending a build");
     building = { cancelled: false };
     const me = building;
+    status();
     try {
       if (timer || !lastSnap) snapshotNow();
       const snap = lastSnap;
@@ -170,6 +201,7 @@ export function createBridge({ api, partOf, onStatus }) {
       }
     } finally {
       building = null;
+      status();
     }
   }
   function cancelBuild() {
@@ -201,10 +233,11 @@ export function createBridge({ api, partOf, onStatus }) {
     get seq() { return seq; },
     get acked() { return acked; },
     get pending() { return pending; },
+    get lastBuild() { return lastBuild; },
     changed, flush, build, cancelBuild,
     stop() {
       stopped = true;
-      clearTimeout(timer); clearTimeout(retryTimer);
+      clearTimeout(timer); clearTimeout(retryTimer); clearTimeout(idleTimer);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", onVisible);
     },
