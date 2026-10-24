@@ -2,3 +2,5 @@
 .claude/settings.local.json
 __pycache__/
 sketches/
+node_modules/
+web/dist/
