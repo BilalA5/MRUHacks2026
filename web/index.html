@@ -724,6 +724,7 @@ input,select{font-size:16px}
   }
 
   canvas.addEventListener('pointerdown', e => {
+    tweenId++;                          // a touch or pen stops any zoom glide in progress
     if (e.pointerType === 'touch') {
       // Fingers navigate only. Two fingers pan and pinch; one finger does nothing, so a resting palm is harmless.
       e.preventDefault(); touches.set(e.pointerId, screenPt(e));
@@ -981,9 +982,27 @@ input,select{font-size:16px}
 
   // ---------- zoom buttons: zoom about the middle of the screen ----------
   const screenCentre = () => { const r = canvas.getBoundingClientRect(); return { x: r.width / 2, y: r.height / 2 }; };
-  $('zoomIn').onclick = () => zoomAt(screenCentre(), 1.25);
-  $('zoomOut').onclick = () => zoomAt(screenCentre(), 0.8);
-  $('zoomPct').onclick = () => zoomAt(screenCentre(), 1 / view.s);
+  // Buttons glide to the new zoom (ease-out, 180 ms). Fingers, pencil and the wheel act directly.
+  let tweenId = 0;
+  function tweenZoom(factor) {
+    const from = { ...view }, c = screenCentre();
+    const s1 = Math.min(8, Math.max(.2, from.s * factor));
+    const w = toWorld(c);
+    const to = { x: w.x - c.x / s1, y: w.y - c.y / s1, s: s1 };
+    if (reduced) { setView(to.x, to.y, to.s); return; }
+    const id = ++tweenId, t0 = performance.now();
+    const step = () => {
+      if (id !== tweenId) return;
+      // Same clock as t0. The frame timestamp can be earlier than this and would give negative progress.
+      const t = Math.min(1, (performance.now() - t0) / 180), k = 1 - Math.pow(1 - t, 3);
+      setView(from.x + (to.x - from.x) * k, from.y + (to.y - from.y) * k, from.s + (to.s - from.s) * k);
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  $('zoomIn').onclick = () => tweenZoom(1.25);
+  $('zoomOut').onclick = () => tweenZoom(0.8);
+  $('zoomPct').onclick = () => tweenZoom(1 / view.s);
 
   // ---------- start ----------
   window.addEventListener('resize', resize);
