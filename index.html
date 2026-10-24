@@ -213,3 +213,50 @@ body{user-select:none;-webkit-user-select:none}
     render();
   }
   function updateUndo(){toolbar.querySelector('[data-tool="undo"]').disabled=!strokes.length&&!dimensions.length;toolbar.querySelector('[data-tool="redo"]').disabled=!redoStack.length}
+  function nearestStroke(p){
+    let best=-1,bestD=18;
+    strokes.forEach((s,i)=>s.points.forEach(q=>{const d=Math.hypot(q.x-p.x,q.y-p.y);if(d<bestD){bestD=d;best=i}}));
+    return best;
+  }
+  function snappedPoints(points){
+    if(!snap||points.length<5)return points;
+    const a=points[0],b=points[points.length-1],dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);
+    if(len<35)return points;
+    const angle=Math.atan2(dy,dx),near=Math.round(angle/(Math.PI/4))*(Math.PI/4);
+    if(Math.abs(angle-near)<.055){
+      const end={x:a.x+Math.cos(near)*len,y:a.y+Math.sin(near)*len,p:b.p};
+      showToast('Line');
+      return [a,end];
+    }
+    // Detect roughly circular loops, retaining the start point as the center estimate.
+    const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+    const width=Math.max(...xs)-Math.min(...xs),height=Math.max(...ys)-Math.min(...ys);
+    const close=Math.hypot(a.x-b.x,a.y-b.y)<Math.max(width,height)*.28;
+    if(close&&width>24&&height>24&&Math.max(width,height)/Math.min(width,height)<1.3){
+      const cx=(Math.min(...xs)+Math.max(...xs))/2,cy=(Math.min(...ys)+Math.max(...ys))/2,r=(width+height)/4;
+      showToast('Circle');return Array.from({length:65},(_,i)=>({x:cx+r*Math.cos(i/64*Math.PI*2),y:cy+r*Math.sin(i/64*Math.PI*2),p:.5}));
+    }
+    return points;
+  }
+  canvas.addEventListener('pointerdown',e=>{
+    // Apple Pencil only: finger touches on the sheet are ignored for palm rejection.
+    if(e.pointerType!=='pen')return;
+    if(dimSheet.classList.contains('open')||overlay.classList.contains('open'))return;
+    e.preventDefault();const p=point(e);
+    if(tool==='dimension'){
+      if(!dimFirst){dimFirst=p;showToast('Choose second point');}
+      else{dimPreview=p;openDimension(p)}
+      render();return;
+    }
+    if(tool==='eraser'){const i=nearestStroke(p);if(i>=0){redoStack=[];strokes.splice(i,1);updateUndo();render()}return}
+    if(tool!=='pen')return;
+    canvas.setPointerCapture(e.pointerId);active={points:[p]};hint.classList.add('hidden');render();
+  });
+  canvas.addEventListener('pointermove',e=>{
+    if(e.pointerType!=='pen')return;const p=point(e);
+    if(active){e.preventDefault();active.points.push(p);render()}
+    else if(dimFirst&&tool==='dimension'){dimPreview=p;render()}
+  });
+  function finishStroke(){if(!active)return;active.points=snappedPoints(active.points);strokes.push(active);active=null;redoStack=[];updateUndo();render()}
+  canvas.addEventListener('pointerup',finishStroke);canvas.addEventListener('pointercancel',finishStroke);
+  canvas.addEventListener('pointerleave',()=>{if(active)finishStroke()});
