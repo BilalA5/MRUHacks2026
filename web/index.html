@@ -19,22 +19,31 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-side::-webkit-scrollbar{display:none}
 .eng-side section + section{margin-top:8px}
 .eng-side h3{margin:0 0 4px 8px;font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8a96a3}
-.eng-side button{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 10px;border:0;border-radius:9px;background:transparent;color:#1F2A36;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:left;cursor:pointer;transition:transform 160ms cubic-bezier(.23,1,.32,1),background-color 160ms ease}
+.eng-side button{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 10px;border:0;border-radius:9px;background:transparent;color:#1F2A36;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:left;cursor:pointer;transition:transform 160ms cubic-bezier(.23,1,.32,1),background-color 160ms ease}
 .eng-side button:active{transform:scale(.97)}
 .eng-side button.on{background:#EAF0FF}
 .eng-side .ico{display:inline-flex;width:20px;height:20px;flex:none;color:#2563EB}
 .eng-side .ico svg{width:20px;height:20px}
 @media (hover:hover) and (pointer:fine){.eng-side button:hover{background:#f0f3f6}.eng-side button.on:hover{background:#dfe8ff}}
 @media (prefers-reduced-motion:reduce){.eng-side button{transition:none}}
+/* Sheet settings: a small pair of toggles under the tools */
+.eng-sheet{display:flex;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid #edf0f3}
+.eng-sheet button{flex:1;justify-content:center;gap:6px;min-height:40px;padding:0 6px;font-size:13px;color:#5b6772}
 /* Status toast: shows what an engineering tool did, or why it could not run */
 .eng-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:10px;max-width:min(440px,calc(100vw - 32px));padding:11px 16px;border-radius:12px;background:#1F2A36;color:#fff;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 10px 30px #1f2a3640;pointer-events:none;animation:eng-toast-in 220ms cubic-bezier(.23,1,.32,1) both}
 .eng-toast::before{content:"";width:8px;height:8px;border-radius:50%;background:#4ade80;flex:none}
 .eng-toast.warn::before{background:#f59e0b}
+.eng-toast.sticky{pointer-events:auto;padding:6px 6px 6px 16px}
+.eng-toast button{min-height:36px;padding:0 14px;border:0;border-radius:8px;background:#ffffff1f;color:#fff;font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer}
+.eng-toast button:active{background:#ffffff33}
+/* First-run hint while the sheet is empty */
+.eng-hint{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:5;max-width:min(460px,calc(100vw - 32px));color:#7b8794;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none}
 @keyframes eng-toast-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 @media (prefers-reduced-motion:reduce){.eng-toast{animation:none}}
 /* Depth dialog for Mark profile */
 .eng-dialog-wrap{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(31,42,54,.17);padding:24px}
-.eng-dialog{width:min(340px,100%);display:flex;flex-direction:column;gap:14px;padding:20px;background:#fff;border:1px solid #e8ebee;border-radius:14px;box-shadow:0 18px 60px #1f2a362b;font:14px -apple-system,BlinkMacSystemFont,sans-serif;color:#1F2A36;animation:eng-toast-in 200ms cubic-bezier(.23,1,.32,1) both}
+.eng-dialog{width:min(380px,100%);max-height:calc(100% - 24px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding:20px;background:#fff;border:1px solid #e8ebee;border-radius:14px;box-shadow:0 18px 60px #1f2a362b;font:14px -apple-system,BlinkMacSystemFont,sans-serif;color:#1F2A36;animation:eng-dialog-in 200ms cubic-bezier(.23,1,.32,1) both}
+@keyframes eng-dialog-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
 .eng-dialog h2{margin:0;font:600 17px -apple-system,BlinkMacSystemFont,sans-serif}
 .eng-dialog label{display:flex;flex-direction:column;gap:6px;font-weight:500;color:#3B4650}
 .eng-dialog input{height:44px;padding:0 12px;border:1px solid #cfd6df;border-radius:9px;font:16px -apple-system,BlinkMacSystemFont,sans-serif}
@@ -42,6 +51,10 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-dialog-actions button{min-height:44px;padding:0 18px;border-radius:9px;border:1px solid #dce1e7;background:#fff;color:#3B4650;font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;transition:transform 160ms cubic-bezier(.23,1,.32,1)}
 .eng-dialog-actions button:active{transform:scale(.97)}
 .eng-dialog-actions .primary{background:#2563EB;border-color:#2563EB;color:#fff}
+.eng-dialog-actions .primary:disabled{background:#a9bff2;border-color:#a9bff2;cursor:default}
+.eng-dialog-actions .danger{margin-right:auto;color:#b42318;border-color:#f1d0cc}
+.eng-row{display:flex;gap:10px}
+.eng-row label{flex:1;min-width:0}
 @media (prefers-reduced-motion:reduce){.eng-dialog{animation:none}}
 /* Part feature dialog: Extrude / Revolve switch and a summary line */
 .eng-seg{display:flex;gap:4px;padding:3px;border-radius:10px;background:#f0f3f6}
