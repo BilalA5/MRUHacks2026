@@ -905,7 +905,7 @@ function App() {
   const flash = (text, kind = "ok", sticky = false) => {
     setToast({ id: Date.now(), text, kind, sticky });
     clearTimeout(toastTimer.current);
-    if (!sticky) toastTimer.current = setTimeout(() => setToast(null), 2800);
+    if (!sticky) toastTimer.current = setTimeout(() => setToast(t => t && { ...t, leaving: true }), 2800);
   };
 
   const setPick = mode => {
@@ -1339,7 +1339,8 @@ function App() {
       )}
 
       {toast ? (
-        <div key={toast.id} className={"eng-toast " + toast.kind + (toast.sticky ? " sticky" : "")} role="status" aria-live="polite">
+        <div key={toast.id} className={"eng-toast " + toast.kind + (toast.sticky ? " sticky" : "") + (toast.leaving ? " leaving" : "")}
+          role="status" aria-live="polite" onAnimationEnd={() => toast.leaving && setToast(null)}>
           <span>{toast.text}</span>
           {toast.sticky && <button type="button" onClick={() => setPick(null)}>Cancel</button>}
         </div>
