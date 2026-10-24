@@ -136,3 +136,19 @@ body{user-select:none;-webkit-user-select:none}
     <div class="cell units"><label>Units</label><span>mm</span></div>
     <div class="cell date"><label>Date</label><span id="date"></span></div>
   </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="notice" role="alert"><span>Could not reach laptop. Check Wi-Fi and try again.</span><button id="retry">Retry</button></div>
+  <div id="sentBadge" role="status" aria-live="polite">Sent to laptop</div>
+  <section id="dimSheet" role="dialog" aria-modal="true" aria-labelledby="dimTitle">
+    <h2 id="dimTitle">Dimension value</h2>
+    <div class="dimrow"><input id="dimValue" type="number" min="0" step="any" aria-label="Dimension value in millimeters"><span class="unit">mm</span></div>
+    <div class="actions"><button id="dimCancel">Cancel</button><button id="dimAdd" class="primary">Add</button></div>
+  </section>
+  <div id="overlay" role="presentation">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="clearTitle">
+      <h2 id="clearTitle">Clear the sheet?</h2>
+      <p>This removes all strokes and dimensions from the current sheet.</p>
+      <div class="actions"><button id="clearCancel">Cancel</button><button id="clearConfirm" class="primary">Clear</button></div>
+    </div>
+  </div>
+</div>
