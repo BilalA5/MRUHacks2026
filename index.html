@@ -76,3 +76,14 @@ body{user-select:none;-webkit-user-select:none}
 .dialog .actions{margin-top:22px}
 #sentBadge{position:absolute;bottom:calc(134px + var(--safe-bottom));right:calc(24px + var(--safe-right));background:#e9f7ef;color:#176b42;border:1px solid #bfe8d0;padding:9px 13px;border-radius:999px;font-size:13px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .15s;z-index:8}
 #sentBadge.show{opacity:1}
+@media(max-width:700px){
+ #sheet{inset:12px}
+ #toolbar{left:calc(10px + var(--safe-left));width:50px;padding:4px}
+ .tool{width:40px;height:40px}
+ #titleblock{width:min(300px,68vw);height:100px;font-size:12px}
+ #status{right:calc(12px + var(--safe-right));top:calc(12px + var(--safe-top))}
+ #settings{right:calc(12px + var(--safe-right));top:calc(56px + var(--safe-top))}
+ #hint{top:calc(14px + var(--safe-top));font-size:12px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style>
