@@ -31,6 +31,9 @@ SETTINGS = {
         ("FCBool", "checkShowReportViewOnNormalMessage", "0"),
         ("FCBool", "checkShowReportViewOnLogMessage", "0"),
     ],
+    "DockWindows": [                             # panels stay docked, never overlaid on the 3D view
+        ("FCBool", "ActivateOverlay", "0"),
+    ],
     "NotificationArea": [
         ("FCBool", "NotificationAreaEnabled", "0"),
     ],

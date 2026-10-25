@@ -1,213 +1,128 @@
-# A pulsing border round FreeCAD's 3D view while a part is being generated.
-# The shader is "Pulsing Border" from the 21st.dev Shader Builder, adapted from Paper Shaders
-# (https://shaders.paper.design/pulsing-border, Apache-2.0). Changes for this use:
-#   - the box follows the view's size (u_box) instead of a fixed 16:9 frame,
-#   - only the light travelling round the border is drawn; the unlit line is faint and the middle is
-#     transparent, so the part shows through,
-#   - the wave count round the border is a whole number, so the light has no seam where it wraps,
-#   - u_alpha fades the whole effect in and out,
-#   - it runs in desktop OpenGL (GLSL 1.20, or 3.30 core) instead of WebGL,
-#   - for speed it shades only a strip round the edges (the middle would be transparent anyway) at 30 fps.
+# The border beam: a light that runs round the edge of FreeCAD's 3D view while the part is being made.
+#
+# Drawn with Qt's painter on a transparent layer over the view, in the colours of the "Pulsing Border" shader
+# (21st.dev Shader Builder, adapted from Paper Shaders, Apache-2.0): navy, blue, cyan, and a white head.
+# A faint track marks the edge; the beam travels it at a constant speed and fades in and out with the build.
+# Only the strip the beam passes through is repainted each frame, so it costs little while it runs, and
+# nothing at all when no part is building.
 import time
-from array import array
 
-from PySide6 import QtCore, QtGui
-from PySide6.QtOpenGL import QOpenGLBuffer, QOpenGLShader, QOpenGLShaderProgram, QOpenGLVertexArrayObject
-from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6 import QtCore, QtGui, QtWidgets
 
-# The recipe's settings (UNIFORMS in the original). Only the ones the border uses are kept;
-# warp, blur, hue, vignette, drift and the cursor are all off in the recipe.
-COLORS = [(0.0196, 0.0275, 0.0510), (0.0706, 0.3804, 0.6275), (0.2078, 0.7686, 0.9098), (0.9490, 0.9843, 1.0)]
-SCALE, INTENSITY, PARAM_A, CONTRAST, GRAIN, SEED, TIME_SCALE = 1.26, 0.35, 0.28, 1.005, 0.042, 1.0, 0.575
-FADE_IN_S, FADE_OUT_S = 0.25, 0.18   # exits are quicker than entrances
-INSET = 0.06                         # where the line sits, in from the view's edge (shader units)
-REACH = 0.26                         # how far in from the edge the line and its glow can show
-
-VERT = """
-attribute vec2 a_position;
-void main() { gl_Position = vec4(a_position, 0.0, 1.0); }
-"""
-
-FRAG = """
-uniform vec3 u_colors[4];
-uniform vec2 u_resolution;
-uniform float u_time;
-uniform vec2 u_box;
-uniform float u_alpha;
-
-const float u_colorCount = 4.0;
-const float u_scale = %(SCALE)f;
-const float u_intensity = %(INTENSITY)f;
-const float u_paramA = %(PARAM_A)f;
-const float u_contrast = %(CONTRAST)f;
-const float u_grain = %(GRAIN)f;
-const float u_seed = %(SEED)f;
-
-float grainHash(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
-
-vec3 palette(float x) {
-  float n = max(u_colorCount - 1.0, 1.0);
-  float f = clamp(x, 0.0, 1.0) * n;
-  vec3 col = u_colors[0];
-  for (int i = 0; i < 3; i++) {
-    if (float(i) < n)
-      col = mix(col, u_colors[i + 1], smoothstep(0.0, 1.0, clamp(f - float(i), 0.0, 1.0)));
-  }
-  return col;
-}
-
-// The border's colour; mask is how much of the line is here (1 on it, fading through the glow),
-// light how lit it is by the travelling pulse.
-vec3 shade(vec2 p, float t, out float mask, out float light) {
-  vec2 d = abs(p) - u_box;
-  float outside = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
-  float thickness = mix(0.018, 0.11, u_paramA);
-  float edge = 1.0 - smoothstep(thickness * 0.35, thickness, abs(outside));
-  float perimeter = atan(p.y * u_box.x, p.x * u_box.y) / 6.2831853 + 0.5;
-  // The recipe's 5 + 9 * intensity radians is about 1.3 waves round the border; rounded to whole waves
-  // so the light has no seam where perimeter wraps from 1 back to 0.
-  float waves = max(1.0, floor((5.0 + u_intensity * 9.0) / 6.2831853 + 0.5));
-  float pulse = 0.5 + 0.5 * sin(perimeter * waves * 6.2831853 - t * 1.8);
-  float trail = pow(pulse, mix(7.0, 2.0, u_intensity));
-  light = trail;
-  float innerGlow = exp(-abs(outside) * 24.0) * 0.32;
-  mask = clamp(edge + innerGlow, 0.0, 1.0);
-  return mix(u_colors[0], palette(trail), mask);
-}
-
-void main() {
-  vec2 p = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
-  p *= u_scale;
-  float mask, light;
-  vec3 col = shade(p, u_time, mask, light);
-  col = (col - 0.5) * u_contrast + 0.5;
-  col += (grainHash(gl_FragCoord.xy + vec2(u_seed * 17.0, u_seed * 31.0)) - 0.5) * u_grain;
-  float a = mask * mix(0.12, 1.0, light) * u_alpha;   // the unlit line is a faint trace
-  OUT_COLOR = vec4(clamp(col, 0.0, 1.0) * a, a);   // premultiplied, as Qt composites it
-}
-""" % dict(SCALE=SCALE, INTENSITY=INTENSITY, PARAM_A=PARAM_A, CONTRAST=CONTRAST, GRAIN=GRAIN, SEED=SEED)
+TRAIL = [(5, 7, 13), (18, 97, 160), (53, 196, 232), (242, 251, 255)]   # tail to head
+LAP_S = 2.6            # one trip round the view
+BEAM = 0.24            # the beam's length, as a share of the edge
+INSET = 3              # px in from the view's edge
+RADIUS = 12            # corner radius of the track
+FADE_IN_S, FADE_OUT_S = 0.2, 0.15   # exits are quicker than entrances
+FPS = 30
 
 
-class PulseBorder(QOpenGLWidget):
+def _mix(t):
+    """The trail colour at t: 0 at the tail, 1 at the head."""
+    t = max(0.0, min(1.0, t)) * (len(TRAIL) - 1)
+    i = min(int(t), len(TRAIL) - 2)
+    f = t - i
+    return [round(a + (b - a) * f) for a, b in zip(TRAIL[i], TRAIL[i + 1])]
+
+
+class BorderBeam(QtWidgets.QWidget):
     def __init__(self, area):
         super().__init__(area)
-        fmt = QtGui.QSurfaceFormat.defaultFormat()
-        fmt.setAlphaBufferSize(8)
-        self.setFormat(fmt)
-        self.setAttribute(QtCore.Qt.WA_AlwaysStackOnTop)          # lets the 3D view show through the middle
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
-        self.start = time.time()
-        self.alpha, self.target, self.last = 0.0, 0.0, None
+        self.setAttribute(QtCore.Qt.WA_NoSystemBackground)
+        self.alpha, self.target, self.last, self.start = 0.0, 0.0, time.time(), time.time()
+        self.dirty = QtCore.QRect()
         self.timer = QtCore.QTimer(self)
-        self.timer.timeout.connect(self.update)
-        self.prog = None
-        self.strip_for = None       # the size the edge strip was built for
+        self.timer.timeout.connect(self.step)
         area.installEventFilter(self)
         self.setGeometry(area.rect())
         self.hide()
 
     def play(self, on):
-        """Fades the border in (on) or out."""
+        """Fades the beam in (on) or out."""
         self.target = 1.0 if on else 0.0
-        if on:
+        if on and not self.isVisible():
             self.setGeometry(self.parentWidget().rect())
             self.show()
             self.raise_()
-        if not self.timer.isActive():
+            self.update()
+        if not self.timer.isActive() and (on or self.alpha > 0):
             self.last = time.time()
-            self.timer.start(33)
+            self.timer.start(int(1000 / FPS))
 
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.Resize:
             self.setGeometry(obj.rect())
         return False
 
-    def initializeGL(self):
-        ctx = self.context()
-        core = ctx.format().profile() == QtGui.QSurfaceFormat.CoreProfile
-        if core:
-            vert = "#version 330 core\n" + VERT.replace("attribute", "in")
-            frag = "#version 330 core\nout vec4 fragColor;\n#define OUT_COLOR fragColor\n" + FRAG
-        else:
-            vert = "#version 120\n" + VERT
-            frag = "#version 120\n#define OUT_COLOR gl_FragColor\n" + FRAG
-        self.prog = QOpenGLShaderProgram(self)
-        ok = self.prog.addShaderFromSourceCode(QOpenGLShader.Vertex, vert)
-        ok = self.prog.addShaderFromSourceCode(QOpenGLShader.Fragment, frag) and ok
-        self.prog.bindAttributeLocation("a_position", 0)
-        if not (ok and self.prog.link()):
-            print("[BoardSketch] pulse shader failed:", self.prog.log())
-            self.prog = None
-            return
-        self.vao = QOpenGLVertexArrayObject(self)
-        self.vao.create()
-        self.vao.bind()
-        self.vbo = QOpenGLBuffer(QOpenGLBuffer.VertexBuffer)
-        self.vbo.create()
-        self.vbo.bind()
-        self.prog.bind()
-        self.prog.enableAttributeArray(0)
-        self.prog.setAttributeBuffer(0, 0x1406, 0, 2)            # GL_FLOAT
-        for i, c in enumerate(COLORS):
-            self.prog.setUniformValue(f"u_colors[{i}]", QtGui.QVector3D(*c))
-        self.vao.release()
+    def track(self):
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()).adjusted(INSET, INSET, -INSET, -INSET), RADIUS, RADIUS)
+        return path
 
-    def strip(self, w, h):
-        """Four quads along the edges, as deep as the line and its glow reach; nothing else is shaded."""
-        if self.strip_for == (w, h):
-            return
-        self.strip_for = (w, h)
-        reach = REACH / SCALE * min(w, h)                 # shader units to pixels
-        bx, by = min(1.0, 2 * reach / w), min(1.0, 2 * reach / h)
-        quads = [(-1, 1 - by, 1, 1), (-1, -1, 1, -1 + by), (-1, -1 + by, -1 + bx, 1 - by), (1 - bx, -1 + by, 1, 1 - by)]
-        pts = []
-        for x0, y0, x1, y1 in quads:
-            pts += [x0, y0, x1, y0, x1, y1, x0, y0, x1, y1, x0, y1]
-        data = array("f", pts).tobytes()
-        self.vbo.bind()
-        self.vbo.allocate(data, len(data))
+    def head(self):
+        return ((time.time() - self.start) / LAP_S) % 1.0
 
-    def paintGL(self):
-        gl = self.context().functions()
-        gl.glClearColor(0, 0, 0, 0)
-        gl.glClear(0x4000)                                        # GL_COLOR_BUFFER_BIT
+    def beam_rect(self):
+        path, h = self.track(), self.head()
+        pts = [path.pointAtPercent((h - BEAM * i / 8) % 1.0) for i in range(9)]
+        xs, ys = [p.x() for p in pts], [p.y() for p in pts]
+        return QtCore.QRect(int(min(xs)), int(min(ys)), int(max(xs) - min(xs)) + 1, int(max(ys) - min(ys)) + 1)
+
+    def step(self):
         now = time.time()
-        dt = now - (self.last or now)
-        self.last = now
-        step = dt / (FADE_IN_S if self.target > self.alpha else FADE_OUT_S)
-        self.alpha = min(self.target, self.alpha + step) if self.target > self.alpha else max(self.target, self.alpha - step)
+        dt, self.last = now - self.last, now
+        rate = dt / (FADE_IN_S if self.target > self.alpha else FADE_OUT_S)
+        self.alpha = min(self.target, self.alpha + rate) if self.target > self.alpha else max(self.target, self.alpha - rate)
         if self.alpha <= 0 and self.target == 0:
             self.timer.stop()
-            QtCore.QTimer.singleShot(0, self.hide)
+            self.hide()
             return
-        if not self.prog:
+        # Repaint only where the beam was and where it is now; the whole edge while fading, for the track
+        here = self.beam_rect()
+        self.update(self.rect() if 0 < self.alpha < 1 else (here | self.dirty).adjusted(-16, -16, 16, 16))
+        self.dirty = here
+
+    def paintEvent(self, event):
+        if self.alpha <= 0:
             return
-        ratio = self.devicePixelRatioF()
-        w, h = self.width() * ratio, self.height() * ratio
-        # The border sits just inside the view's edges, in the shader's scaled, aspect-corrected space.
-        box = QtGui.QVector2D(0.5 * w / min(w, h) * SCALE - INSET, 0.5 * h / min(w, h) * SCALE - INSET)
         eased = 1 - (1 - self.alpha) ** 3
-        self.prog.bind()
-        self.vao.bind()
-        self.strip(w, h)
-        self.prog.setUniformValue("u_resolution", QtGui.QVector2D(w, h))
-        self.prog.setUniformValue("u_time", float((now - self.start) * TIME_SCALE))
-        self.prog.setUniformValue("u_box", box)
-        self.prog.setUniformValue("u_alpha", float(eased))
-        gl.glDrawArrays(0x0004, 0, 24)                            # GL_TRIANGLES: 4 quads
-        self.vao.release()
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        path = self.track()
+        # The track: a faint line round the whole edge
+        p.setPen(QtGui.QPen(QtGui.QColor(53, 196, 232, int(46 * eased)), 1.2))
+        p.drawPath(path)
+        # The beam: one smooth stroke along the edge from tail to head, coloured tail (navy, clear) to
+        # head (white), drawn as a wide soft glow and then a bright core, with a glowing point at the head.
+        h, n = self.head(), 48
+        pts = [path.pointAtPercent((h - BEAM * (1 - i / n)) % 1.0) for i in range(n + 1)]
+        beam = QtGui.QPainterPath(pts[0])
+        for q in pts[1:]:
+            beam.lineTo(q)
+        for width, strength in ((10.0, 0.32), (2.6, 1.0)):
+            grad = QtGui.QLinearGradient(pts[0], pts[-1])
+            for stop, (r, g, b), a in ((0.0, TRAIL[0], 0.0), (0.45, TRAIL[1], 0.55), (0.8, TRAIL[2], 0.95), (1.0, TRAIL[3], 1.0)):
+                grad.setColorAt(stop, QtGui.QColor(r, g, b, int(255 * a * strength * eased)))
+            p.setPen(QtGui.QPen(QtGui.QBrush(grad), width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin))
+            p.drawPath(beam)
+        glow = QtGui.QRadialGradient(pts[-1], 12)
+        glow.setColorAt(0, QtGui.QColor(242, 251, 255, int(220 * eased)))
+        glow.setColorAt(0.4, QtGui.QColor(53, 196, 232, int(120 * eased)))
+        glow.setColorAt(1, QtGui.QColor(53, 196, 232, 0))
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(glow)
+        p.drawEllipse(pts[-1], 12, 12)
+        p.end()
 
 
-_pulse = None
+_beam = None
 
 
 def attach(area):
-    global _pulse
-    if _pulse is None:
-        _pulse = PulseBorder(area)
-    return _pulse
+    global _beam
+    if _beam is None:
+        _beam = BorderBeam(area)
+    return _beam
