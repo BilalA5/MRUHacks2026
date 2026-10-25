@@ -30,8 +30,20 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-sheet{display:flex;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid #edf0f3}
 .eng-sheet button{flex:1;flex-direction:column;justify-content:center;gap:2px;min-height:48px;padding:4px 2px;font-size:11px;color:#5b6772;white-space:nowrap}
 /* Bridge: whether the laptop has the latest drawing and which build the AI has */
-.eng-send{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #edf0f3}
-.eng-link{display:flex;align-items:center;gap:7px;margin:0 0 0 8px;font:500 12px -apple-system,BlinkMacSystemFont,sans-serif;color:#5b6772}
+.eng-send{display:flex;flex-direction:column;gap:4px;margin-top:4px}
+.eng-status{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 8px}
+.eng-link{display:flex;align-items:center;gap:7px;flex:1;min-width:0;margin:0;font:500 12px -apple-system,BlinkMacSystemFont,sans-serif;color:#5b6772}
+.eng-link span{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.eng-mass{flex:none;font:600 12px -apple-system,BlinkMacSystemFont,sans-serif;font-variant-numeric:tabular-nums;color:#1F2A36}
+/* Shop checks fold into one quiet row; tapping it opens the list (or shows the shape, for one check) */
+.eng-side .eng-checkrow{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 10px;border-radius:9px;background:#F3F6FA;color:#3B4650;font:500 13px -apple-system,BlinkMacSystemFont,sans-serif;animation:eng-rise 200ms cubic-bezier(.23,1,.32,1)}
+.eng-side .eng-checkrow::before{content:"";width:6px;height:6px;border-radius:50%;background:#2563EB;flex:none}
+.eng-side .eng-checkrow.warn{background:#FFF6EB;color:#7A4A06}
+.eng-side .eng-checkrow.warn::before{background:#d97706}
+.eng-checkrow .chev{margin-left:auto;font-size:16px;line-height:1;color:currentColor;opacity:.5}
+@media (hover:hover) and (pointer:fine){.eng-side .eng-checkrow:hover{background:#EBF0F6}.eng-side .eng-checkrow.warn:hover{background:#FDEEDC}}
+@keyframes eng-rise{from{opacity:0;transform:translateY(4px)}}
+@media (prefers-reduced-motion:reduce){.eng-side .eng-checkrow{animation:none}}
 .eng-link::before{content:"";width:6px;height:6px;border-radius:50%;background:#9aa5b1;flex:none;transition:background-color 200ms ease}
 .eng-link.live::before{background:#16a34a}
 .eng-link.syncing::before{background:#2563EB}

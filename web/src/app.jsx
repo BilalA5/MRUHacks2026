@@ -470,8 +470,13 @@ function applyPart(api, plan, feature, flash) {
     const edge = feature.topEdge ? `, top edges ${feature.topEdge.kind === "fillet" ? "R" : "C"}${fmt(feature.topEdge.size)}` : "";
     const text = { revolve: `Revolve ${fmt(feature.angleDeg)}°`, boss: `Boss ${fmt(feature.heightMm)} mm`,
       pocket: `Pocket ${fmt(feature.depthMm)} mm deep` }[feature.feature]
-      || `${fmt(feature.depthMm)} mm ${MATERIALS[feature.material]?.name || "plate"}${feature.process ? ` · ${PROCESSES[feature.process]}` : ""}`;
-    return { type: "text", x: b.minX, y: b.minY - 72, text: text + edge, fontSize: 14, strokeColor: BLUE };   // above, clear of dimensions and the centre line
+      || (feature.on ? `${fmt(feature.depthMm)} mm ${MATERIALS[feature.material]?.name || "plate"} · ${feature.place === "inside" ? "set in" : "on top"}`
+        : `${fmt(feature.depthMm)} mm ${MATERIALS[feature.material]?.name || "plate"}${feature.process ? ` · ${PROCESSES[feature.process]}` : ""}`);
+    // Above, clear of dimensions and the centre line; a part drawn on another part labels just above itself,
+    // inside the part under it, so the two parts' labels never sit on top of each other
+    return feature.feature === "extrude" && feature.on
+      ? { type: "text", x: b.minX, y: b.minY - 20, text: text + edge, fontSize: 12, strokeColor: BLUE }
+      : { type: "text", x: b.minX, y: b.minY - 72, text: text + edge, fontSize: 14, strokeColor: BLUE };
   });
   const labelEls = convertToExcalidrawElements(labels).map((e, i) => ({
     ...e, groupIds: [groups.get(plan.outers[i].el.id)], customData: { note: "label", of: plan.outers[i].el.id },
@@ -919,7 +924,8 @@ function partSketch(elements) {
     if (part.feature === "boss") return { id: el.id, type: "boss", on: part.on, height: part.heightMm, profile: shape(el), holes, ...edge };
     if (part.feature === "pocket") return { id: el.id, type: "pocket", on: part.on, depth: part.depthMm, profile: shape(el), holes };
     const bends = bendsOf(el);
-    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes, ...edge, ...madeOf(part), ...(bends.length ? { bends } : {}) };
+    const placed = part.on && byId.has(part.on) ? { on: part.on, place: part.place || "top" } : {};   // a part of its own, on or in another
+    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes, ...edge, ...madeOf(part), ...placed, ...(bends.length ? { bends } : {}) };
   });
 
   const used = new Set([...profiles.map(el => el.id), ...els.filter(el => profiles.some(p => p.id === holeOf(el)?.of)).map(el => el.id)]);
@@ -935,6 +941,13 @@ function partSketch(elements) {
     notes: els.filter(el => el.type === "text" && !isNote(el)).map(el => ({ text: el.text, at: P({ x: el.x, y: el.y }) })),
   };
 }
+
+// What the laptop's part is made of, in words: one material, or each part's.
+const madeOf = made => {
+  const names = [...new Set((made.bodies || []).map(b => b.material?.name).filter(Boolean))];
+  const parts = made.bodies?.length > 1 ? `${made.bodies.length} parts: ` : "";
+  return names.length ? parts + names.join(", ") : made.material?.name || "No material set";
+};
 
 // ---- Tools. Each one reports what it did, or why it could not run. ----
 
@@ -1235,7 +1248,7 @@ function App() {
     const mode = was?.feature && (base || !["boss", "pocket"].includes(was.feature)) ? was.feature : base ? "boss" : plan.axis ? "revolve" : "extrude";
     const material = was?.material || lastPart.current.material;
     const bends = live(api).some(b => bendOf(b) && crosses(b, pts));
-    setDialog({ type: "part", plan, base, mode, depth: fmt(was?.depthMm ?? was?.heightMm ?? (base ? 5 : 10)), angle: fmt(was?.angleDeg ?? 360),
+    setDialog({ type: "part", plan, base, mode, place: was?.place || "top", depth: fmt(was?.depthMm ?? was?.heightMm ?? (base ? 5 : 10)), angle: fmt(was?.angleDeg ?? 360),
       edgeKind: was?.topEdge?.kind || "none", edgeSize: fmt(was?.topEdge?.size ?? 1),
       material, process: was?.process || (bends ? "sheet" : lastPart.current.process) || defaultProcess(material, bends) });
   };
@@ -1542,7 +1555,8 @@ function App() {
       if (mode !== "extrude" && !dialog.base) return flash("Draw it inside a part to stack it on top", "warn");
       const feature = mode === "boss" ? { feature: "boss", heightMm: d, on: dialog.base.id }
         : mode === "pocket" ? { feature: "pocket", depthMm: d, on: dialog.base.id }
-        : { feature: "extrude", depthMm: d, material: dialog.material, process: dialog.process };
+        : { feature: "extrude", depthMm: d, material: dialog.material, process: dialog.process,
+            ...(dialog.base ? { on: dialog.base.id, place: dialog.place } : {}) };
       if (mode === "extrude") lastPart.current = { material: dialog.material, process: dialog.process };
       applyPart(api, plan, edge ? { ...feature, topEdge: edge } : feature, flash);
     } else {
@@ -1771,20 +1785,22 @@ function App() {
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Squares }} /><span>3D file</span>
           </button>
         </div>
+        {/* The laptop's side, on one line: whether it has the drawing, and what the part weighs.
+            Shop checks fold into one row that opens the list. */}
         <div className="eng-send">
-          <p className={"eng-link " + link.state} role="status" aria-live="polite">{link.text}</p>
-          {made?.status === "ok" && !made.preview && (
-            <p className="eng-made">{made.material ? `${made.material.name} · ${fmt(made.mass)} g` : `${fmt(made.volume / 1000)} cm³ · no material set`}</p>
-          )}
+          <div className="eng-status">
+            <p className={"eng-link " + link.state} role="status" aria-live="polite" title={link.text}><span>{link.text}</span></p>
+            {made?.status === "ok" && !made.preview && (
+              <span className="eng-mass" title={madeOf(made)}>{made.mass != null ? `${fmt(made.mass)} g` : `${fmt(made.volume / 1000)} cm³`}</span>
+            )}
+          </div>
           {made?.checks?.length > 0 && (
-            <ul className="eng-checks" aria-label="Manufacturing checks">
-              {made.checks.slice(0, 2).map((c, i) => (
-                <li key={i}><button type="button" className={c.level} onClick={() => showCheck(c)}><span>{c.message}</span></button></li>
-              ))}
-              {made.checks.length > 2 && (
-                <li><button type="button" className="more" onClick={() => setDialog({ type: "checks" })}>All {made.checks.length} checks</button></li>
-              )}
-            </ul>
+            <button type="button" className={"eng-checkrow " + (made.checks.some(c => c.level === "warn") ? "warn" : "note")}
+              onClick={() => made.checks.length === 1 ? showCheck(made.checks[0]) : setDialog({ type: "checks" })}
+              title={made.checks.length === 1 ? made.checks[0].message : undefined}>
+              <span>{made.checks.length === 1 ? "1 shop check" : `${made.checks.length} shop checks`}</span>
+              <span className="chev" aria-hidden="true">›</span>
+            </button>
           )}
         </div>
       </aside>
@@ -1799,8 +1815,11 @@ function App() {
       {dialog?.type === "part" && (
         <Dialog onClose={close} label="Profile" onSubmit={confirmPart}
           actions={<><button type="button" onClick={close}>Cancel</button><button type="submit" className="primary">Mark</button></>}>
-          <Seg label="Feature" options={dialog.base ? { boss: "Boss", pocket: "Pocket", extrude: "Extrude", revolve: "Revolve" } : { extrude: "Extrude", revolve: "Revolve" }}
+          <Seg label="Feature" options={dialog.base ? { boss: "Boss", pocket: "Pocket", extrude: "New part", revolve: "Revolve" } : { extrude: "Extrude", revolve: "Revolve" }}
             value={dialog.mode} onChange={m => setDialog(d => ({ ...d, mode: m }))} />
+          {dialog.mode === "extrude" && dialog.base && (
+            <Seg label="Placed" options={{ top: "On top", inside: "Set inside" }} value={dialog.place} onChange={v => setDialog(d => ({ ...d, place: v }))} />
+          )}
           {["extrude", "revolve"].includes(dialog.mode) && (
             <div className="eng-row">
               <Pick label="Material" value={dialog.material} options={Object.fromEntries(Object.entries(MATERIALS).map(([k, m]) => [k, m.name]))}
@@ -1828,6 +1847,9 @@ function App() {
               : dialog.mode === "revolve" && dialog.plan.crossesAxis ? "The profile crosses the centre line. Keep it on one side."
               : dialog.mode === "boss" ? "Stands on top of the part it is drawn on" + (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} through all` : "")
               : dialog.mode === "pocket" ? "Cut down into the part it is drawn on" + (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} through all` : "")
+              : dialog.mode === "extrude" && dialog.base ? (dialog.place === "inside"
+                ? "A separate part set into the one it is drawn on, which is cut to fit and shows see-through in 3D"
+                : "A separate part in its own material, layered on top of the one it is drawn on")
               : `${dialog.plan.outers.length > 1 ? dialog.plan.outers.length + " profiles" : "1 profile"}` +
                 (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} cut through` : ", no holes")}
           </p>
