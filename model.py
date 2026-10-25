@@ -20,12 +20,18 @@ from pathlib import Path
 import cadquery as cq
 from cadquery import Vector
 
+import checks
+import drawing
+import sheetmetal
+
 PREVIEW_DEPTH = 10      # mm, for closed outlines not yet made into a part (the canvas's default depth)
 PREVIEW_MIN = 3         # mm: smaller closed outlines are Pencil taps, not shapes, and get no preview
 EXTRA = 1               # mm that cutting tools run past the faces they cut, so no skin is left
 # brep is OpenCascade's own format: the fastest to write and for FreeCAD to read, so the live view uses it.
 # The others are made when someone downloads or prints the part: 3mf and stl for printers, step for CAD.
-FORMATS = {"brep": "model.brep", "stl": "model.stl", "3mf": "model.3mf", "step": "model.step", "glb": "model.glb"}
+# dxf is the flat profile (or sheet-metal flat pattern) for laser, waterjet and plasma; svg is the shop drawing.
+FORMATS = {"brep": "model.brep", "stl": "model.stl", "3mf": "model.3mf", "step": "model.step", "glb": "model.glb",
+           "dxf": "model.dxf", "svg": "drawing.svg"}
 
 build_lock = threading.Lock()   # OpenCascade is not safe to call from two threads at once
 feature_cache = {}              # feature JSON -> solid
@@ -138,11 +144,12 @@ def prism(f, z0, z1):
     return cq.Solid.extrudeLinear(f.translate(Vector(0, 0, z0)), Vector(0, 0, z1 - z0))
 
 
-# The tool that drills one hole down from the top face (z = depth) of an extrude
+# The tool that drills one hole down from the top face (z = depth) of an extrude.
+# A tapped hole is drilled at its tap-drill size (its diameter), through or to its thread depth.
 def hole_tool(h, depth):
     c, r = Vector(*h["center"], 0), h["diameter"] / 2
     kind = h.get("kind", "through")
-    if kind == "blind":
+    if kind == "blind" or (kind == "tapped" and h.get("depth")):
         return cq.Solid.makeCylinder(r, h["depth"] + EXTRA, c + Vector(0, 0, depth - h["depth"]))
     tool = cq.Solid.makeCylinder(r, depth + 2 * EXTRA, c - Vector(0, 0, EXTRA))
     if kind == "counterbore":
@@ -175,6 +182,13 @@ def round_top(solid, edge, z, notes):
 
 def extrude(feature, notes):
     depth = feature["depth"]
+    if feature.get("bends"):
+        # Sheet metal: the blank is cut with its holes, then folded along its bend lines
+        tools = hole_tools(feature["holes"], depth)
+        flat = prism(face(feature["profile"]), 0, depth)
+        solid, folds = sheetmetal.fold(flat.cut(*tools) if tools else flat, feature["bends"], depth)
+        notes += [f"bend at {f['bend']['a']}: {f['error']}" for f in folds if "error" in f]
+        return solid
     solid = round_top(prism(face(feature["profile"]), 0, depth), feature.get("edge"), depth, notes)
     tools = hole_tools(feature["holes"], depth)
     return solid.cut(*tools) if tools else solid
@@ -288,20 +302,38 @@ def build(part):
         solid = solids[0].fuse(*solids[1:]) if len(solids) > 1 else solids[0]
         solid = (solid.cut(*tools) if tools else solid).clean()
         bb = solid.BoundingBox()
-    return solid, {"status": "ok", "preview": preview, "features": built, "warnings": warnings,
-                   "volume": round(solid.Volume(), 1),
-                   "bbox": {"min": [round(bb.xmin, 2), round(bb.ymin, 2), round(bb.zmin, 2)],
-                            "max": [round(bb.xmax, 2), round(bb.ymax, 2), round(bb.zmax, 2)]}}
+        volume = solid.Volume()
+    # What it is made of and how: the weight, and the shop rules the checks apply
+    material = next((f["material"] for f in features if f.get("material")), None)
+    # A part with bend lines is sheet metal, whatever process was picked before it was bent
+    process = "sheet" if any(f.get("bends") for f in features) else next((f["process"] for f in features if f.get("process")), None)
+    info = {"status": "ok", "preview": preview, "features": built, "warnings": warnings,
+            "volume": round(volume, 1),
+            "bbox": {"min": [round(bb.xmin, 2), round(bb.ymin, 2), round(bb.zmin, 2)],
+                     "max": [round(bb.xmax, 2), round(bb.ymax, 2), round(bb.zmax, 2)]},
+            "material": material, "process": process,
+            "mass": round(volume / 1000 * material["density"], 1) if material else None}
+    info["checks"] = [] if preview else checks.run(features, info)
+    return solid, info
 
 
-def export(solid, folder, kinds=FORMATS):
-    """Writes the model in each of kinds into folder, replacing earlier files only once complete."""
+def export(solid, folder, kinds=FORMATS, part=None, info=None):
+    """Writes the model in each of kinds into folder, replacing earlier files only once complete.
+    The flat profile (dxf) and the shop drawing (svg) are drawn from the part description, so need part."""
     folder.mkdir(parents=True, exist_ok=True)
+    features = (part or {}).get("features") or []
     with build_lock:
         for kind in kinds:
             name = FORMATS[kind]
             tmp = folder / f"tmp-{name}"
-            if kind == "brep":
+            if kind in ("dxf", "svg") and not features:
+                continue
+            if kind == "dxf":
+                if not drawing.write_dxf(features, tmp):
+                    continue
+            elif kind == "svg":
+                drawing.write_svg(solid, features, info or {}, tmp)
+            elif kind == "brep":
                 solid.exportBrep(str(tmp))
             elif kind == "glb":
                 cq.Assembly(solid, color=cq.Color(0.55, 0.62, 0.72)).export(str(tmp), "GLTF")
@@ -333,6 +365,7 @@ class LiveBuilder:
         self.pending, self.built = None, {}      # built: session -> part JSON of its current model
         self.latest = {}                         # session -> info of its current model
         self.solids = {}                         # session -> (seq, its current solid or None)
+        self.parts = {}                          # session -> (part, info) the current solid was built from
         self.exported = {}                       # (session, format) -> seq of the model in that file
         self.wake = threading.Condition()
         threading.Thread(target=self.run, daemon=True).start()
@@ -344,9 +377,10 @@ class LiveBuilder:
             return None
         folder = self.session_dir / session / "model"
         if self.exported.get((session, kind)) != seq:
-            export(solid, folder, [kind])
+            export(solid, folder, [kind], *self.parts.get(session, (None, None)))
             self.exported[(session, kind)] = seq
-        return folder / FORMATS[kind]
+        path = folder / FORMATS[kind]
+        return path if path.exists() else None   # no dxf or drawing while the part is only a preview
 
     def submit(self, snap):
         with self.wake:
@@ -373,6 +407,7 @@ class LiveBuilder:
         solid, info = build(part)
         info = {"session": session, "seq": snap["seq"], **info, "sketch": sketch_lines(part)}
         self.built[session], self.latest[session], self.solids[session] = key, info, (snap["seq"], solid)
+        self.parts[session] = (part, info)
         if solid is not None:
             self.file(session, "brep")   # only the live view's format now; the rest on request
             info["files"] = {kind: f"/api/model?session={session}&format={kind}&v={snap['seq']}" for kind in FORMATS}

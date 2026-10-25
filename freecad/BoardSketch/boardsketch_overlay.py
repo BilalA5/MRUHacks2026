@@ -1,63 +1,79 @@
-# A status card over FreeCAD's 3D view: whether the iPad is sketching, a part is building, or which part is shown.
-# Styled with the BoardSketch theme: a dark surface card, light text and the cyan accent.
+# The status readout over FreeCAD's 3D view: what the iPad is doing and what the part is, at a glance.
+# A quiet panel in the top-left corner, not a notification: a small state label (LIVE, BUILDING, ...),
+# the part's size as the title, and a muted line or two (material and weight, checks).
+# It changes only when what it says changes, with a short fade, and costs nothing in between.
 from PySide import QtCore, QtWidgets
 
 import FreeCADGui as Gui
-from boardsketch_theme import ACCENT, BORDER, MUTED, SURFACE, TEXT
+from boardsketch_theme import MUTED, TEXT
 
-COLORS = {"live": "#22c55e", "drawing": ACCENT, "building": ACCENT, "waiting": MUTED, "offline": "#f59e0b"}
+STATES = {   # label, colour
+    "live": ("LIVE", "#4ade80"), "drawing": ("SKETCHING", "#35C4E8"), "building": ("BUILDING", "#35C4E8"),
+    "waiting": ("CONNECTING", MUTED), "offline": ("OFFLINE", "#f59e0b"),
+}
 
 STYLE = f"""
-#bsCard {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px; }}
-#bsTitle {{ color: {TEXT}; font-size: 14px; font-weight: 600; }}
+#bsCard {{ background: rgba(14, 19, 29, 0.86); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 12px; }}
+#bsState {{ font-size: 10px; font-weight: 600; letter-spacing: 1.2px; }}
+#bsTitle {{ color: {TEXT}; font-size: 15px; font-weight: 600; }}
 #bsDetail {{ color: {MUTED}; font-size: 12px; }}
 """
 
 
-# Kept cheap on purpose: no blur shadow (it redraws the card offscreen) and nothing animating inside it;
-# the pulsing border round the view already shows when a part is building.
 class Card(QtWidgets.QFrame):
     def __init__(self, area):
         super().__init__(area)
         self.setObjectName("bsCard")
         self.setStyleSheet(STYLE)
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-
-        self.dot = QtWidgets.QLabel(self)
-        self.dot.setFixedSize(8, 8)
+        self.state = QtWidgets.QLabel(self, objectName="bsState")
         self.title = QtWidgets.QLabel(self, objectName="bsTitle")
         self.detail = QtWidgets.QLabel(self, objectName="bsDetail")
-
-        head = QtWidgets.QHBoxLayout()
-        head.setSpacing(8)
-        head.addWidget(self.dot, 0, QtCore.Qt.AlignVCenter)
-        head.addWidget(self.title, 1)
+        self.detail.setWordWrap(True)
         box = QtWidgets.QVBoxLayout(self)
-        box.setContentsMargins(14, 10, 14, 12)
-        box.setSpacing(4)
-        box.addLayout(head)
+        box.setContentsMargins(14, 11, 14, 12)
+        box.setSpacing(3)
+        box.addWidget(self.state)
+        box.addWidget(self.title)
         box.addWidget(self.detail)
         area.installEventFilter(self)
         self.shown = None
+        self.fade = None
 
     def show_state(self, state, title, detail=""):
         if self.shown == (state, title, detail) and self.isVisible():
             return                              # nothing changed: no relayout, no repaint
+        changed = self.shown is not None and self.shown[1] != title
         self.shown = (state, title, detail)
-        self.dot.setStyleSheet(f"background: {COLORS.get(state, MUTED)}; border-radius: 4px;")
+        label, colour = STATES.get(state, (state.upper(), MUTED))
+        self.state.setText(label)
+        self.state.setStyleSheet(f"color: {colour};")
         self.title.setText(title)
         self.detail.setText(detail)
         self.detail.setVisible(bool(detail))
-        self.adjustSize()
         self.place()
         self.show()
         self.raise_()
+        if changed:
+            self.flash_in()
+
+    def flash_in(self):
+        """A 160 ms ease-out fade as new content arrives; the effect is removed after, so it costs nothing at rest."""
+        effect = QtWidgets.QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(effect)
+        self.fade = QtCore.QPropertyAnimation(effect, b"opacity", self)
+        self.fade.setDuration(160)
+        self.fade.setStartValue(0.35)
+        self.fade.setEndValue(1.0)
+        self.fade.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        self.fade.finished.connect(lambda: self.setGraphicsEffect(None))
+        self.fade.start()
 
     def place(self):
         area = self.parentWidget()
-        self.setFixedWidth(min(360, max(240, area.width() // 3)))
+        self.setFixedWidth(min(320, max(240, area.width() // 3)))
         self.adjustSize()
-        self.move(24, area.height() - self.height() - 24)   # clear of the pulsing border
+        self.move(20, 20)                       # top left, clear of the beam on the edge
 
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.Resize:
@@ -69,7 +85,7 @@ _card = None
 
 
 def attach():
-    """The card, placed in the bottom-left corner of FreeCAD's view area."""
+    """The readout, in the top-left corner of FreeCAD's view area."""
     global _card
     if _card is None:
         area = Gui.getMainWindow().findChild(QtWidgets.QMdiArea)
