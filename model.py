@@ -305,7 +305,8 @@ def build(part):
         volume = solid.Volume()
     # What it is made of and how: the weight, and the shop rules the checks apply
     material = next((f["material"] for f in features if f.get("material")), None)
-    process = next((f["process"] for f in features if f.get("process")), None)
+    # A part with bend lines is sheet metal, whatever process was picked before it was bent
+    process = "sheet" if any(f.get("bends") for f in features) else next((f["process"] for f in features if f.get("process")), None)
     info = {"status": "ok", "preview": preview, "features": built, "warnings": warnings,
             "volume": round(volume, 1),
             "bbox": {"min": [round(bb.xmin, 2), round(bb.ymin, 2), round(bb.zmin, 2)],

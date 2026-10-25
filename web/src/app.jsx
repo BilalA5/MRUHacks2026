@@ -259,8 +259,9 @@ function dimensionElements(el, dim) {
   }));
 }
 
-// ---- Snapping: a pen stroke becomes a clean line, arc, circle or rectangle when the Pencil lifts, ----
-// ---- and held still at its end, any straight-sided outline. ----
+// ---- Shape detection: a pen stroke held still at its end becomes the clean shape it was drawn as ----
+// ---- (line, arc, circle, ellipse, rectangle, triangle or straight-sided outline). A stroke that is ----
+// ---- not held stays exactly as drawn, like Notes on the iPad. ----
 const HOLD_MS = 450;    // how long the pen must stay still before lifting
 const HOLD_MOVE = 8;    // screen px the pen may drift and still count as still
 const TAP_PX = 6;       // a stroke smaller than this is a Pencil tap, not a drawing
@@ -317,8 +318,7 @@ function recogniseArc(pts) {
   return Array.from({ length: n + 1 }, (_, i) => ({ x: c.x + c.r * Math.cos(a0 + turn * i / n), y: c.y + c.r * Math.sin(a0 + turn * i / n) }));
 }
 
-// Returns {name, skeleton} for a line, arc, circle, rectangle or straight-sided outline, or null.
-// Straight-sided outlines are only made from a held stroke (held), as a quick sketch is often meant freehand.
+// Returns {name, skeleton} for a line, arc, circle, ellipse, rectangle, triangle or straight-sided outline, or null.
 function recogniseStroke(pts, held = true) {
   const a = pts[0], b = pts[pts.length - 1];
   const { minX, maxX, minY, maxY } = bounds(pts);
@@ -347,8 +347,18 @@ function recogniseStroke(pts, held = true) {
   if (w >= 20 && h >= 20 && Math.max(w, h) / Math.min(w, h) <= 4 && near / pts.length >= 0.85 && outlineCorners.length <= 4) {
     return { name: "rectangle", skeleton: { type: "rectangle", x: minX, y: minY, width: w, height: h } };
   }
-  if (held && outlineCorners.length >= 3 && outlineCorners.length <= 16) {
-    return { name: `outline with ${outlineCorners.length} sides`, skeleton: polyline(squarePath(outlineCorners, true), true, {}) };
+  // An oval: every point near the ellipse that fills the stroke's box
+  const rx = w / 2, ry = h / 2;
+  if (rx > 10 && ry > 10 && outlineCorners.length > 4
+    && pts.every(p => Math.abs(Math.hypot((p.x - cx) / rx, (p.y - cy) / ry) - 1) <= 0.18)) {
+    return { name: "ellipse", skeleton: { type: "ellipse", x: minX, y: minY, width: w, height: h } };
+  }
+  if (outlineCorners.length === 3) {
+    return { name: "triangle", skeleton: polyline(squarePath(outlineCorners, true), true, {}) };
+  }
+  if (held && outlineCorners.length >= 4 && outlineCorners.length <= 16) {
+    const named = outlineCorners.length === 4 ? "four-sided outline" : `outline with ${outlineCorners.length} sides`;
+    return { name: named, skeleton: polyline(squarePath(outlineCorners, true), true, {}) };
   }
   return null;
 }
@@ -360,13 +370,14 @@ function snapStroke(api, el, flash, held) {
   const others = api.getSceneElements().filter(e => e.id !== el.id);
   const b = bounds(pts);
   if (!held && Math.max(b.maxX - b.minX, b.maxY - b.minY) < TAP_PX) return commit(api, others);   // a tap, not a drawing
+  if (!held) return;                                                    // not held: it stays as drawn
   const found = recogniseStroke(pts, held);
-  if (!found) return held && flash("Held stroke is not a line, arc, circle, rectangle or straight-sided outline", "warn");
+  if (!found) return held && flash("Couldn't tell which shape that is. It stays as drawn", "warn");
   const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth, strokeStyle: el.strokeStyle };
   const [shape] = convertToExcalidrawElements([{ ...found.skeleton, ...style }]);
   const joined = shape.type === "line" ? joinLines([...others, shape], shape) : null;
   commit(api, joined ? joined.elements : [...others, shape]);
-  flash(joined?.closed ? "Outline closed" : `Snapped to ${found.name}`);
+  flash(joined?.closed ? "Outline closed" : `Made a ${found.name}`);
 }
 
 // Joins a line to the open lines whose ends meet its ends, so an outline drawn one side at a time
@@ -450,7 +461,8 @@ function applyPart(api, plan, feature, flash) {
     const b = bounds(outline(o.el).pts);
     const edge = feature.topEdge ? `, top edges ${feature.topEdge.kind === "fillet" ? "R" : "C"}${fmt(feature.topEdge.size)}` : "";
     const text = { revolve: `Revolve ${fmt(feature.angleDeg)}°`, boss: `Boss ${fmt(feature.heightMm)} mm`,
-      pocket: `Pocket ${fmt(feature.depthMm)} mm deep` }[feature.feature] || `Extrude ${fmt(feature.depthMm)} mm`;
+      pocket: `Pocket ${fmt(feature.depthMm)} mm deep` }[feature.feature]
+      || `${fmt(feature.depthMm)} mm ${MATERIALS[feature.material]?.name || "plate"}${feature.process ? ` · ${PROCESSES[feature.process]}` : ""}`;
     return { type: "text", x: b.minX, y: b.minY - 72, text: text + edge, fontSize: 14, strokeColor: BLUE };   // above, clear of dimensions and the centre line
   });
   const labelEls = convertToExcalidrawElements(labels).map((e, i) => ({
@@ -529,7 +541,8 @@ function sheetFrame(elements) {
   const geometry = els.filter(el => !isNote(el) && el.type !== "text" && outline(el));
 
   // Breakpoints come from clean corners; pen strokes and circles are placed by the map, not shaping it.
-  const vertices = geometry.filter(el => el.type !== "freedraw" && el.type !== "ellipse").flatMap(el => outline(el).pts);
+  const vertices = geometry.filter(el => el.type !== "freedraw" && el.type !== "ellipse" && !el.customData?.bend && !el.customData?.gear)
+    .flatMap(el => outline(el).pts);
   const circleEdges = geometry.filter(el => el.type === "ellipse").flatMap(el => [{ x: el.x, y: el.y }, { x: el.x + el.width, y: el.y + el.height }]);
   const spans = { x: [], y: [] };
   for (const d of dims.filter(d => d.kind === "linear")) {
@@ -557,27 +570,77 @@ function profileBox(f, el) {
 // { hole: true, of: profile id, spec, pattern?, copyOf? }. spec = { kind, diameter, x, y, ... } in mm,
 // x and y measured from the profile's left and bottom edges. kind is through, blind (depth),
 // counterbore (cbDiameter, cbDepth) or countersink (cskDiameter, 90°).
-const HOLE_KINDS = { through: "Through", blind: "Blind", counterbore: "C'bore", countersink: "C'sink" };
+// A tapped hole (thread, nominal; diameter is its tap drill) goes through, or to its thread depth.
+// A hole sized for a fastener names it (fastener: "M5"), and its sizes come from the standards below.
+const HOLE_KINDS = { through: "Through", blind: "Blind", counterbore: "C'bore", countersink: "C'sink", tapped: "Tapped" };
+
+// ISO metric fasteners: clearance hole (ISO 273 medium), coarse thread pitch and tap drill, socket-head
+// counterbore (ISO 4762 head + clearance, depth = head height + 0.4) and 90° countersink (ISO 10642).
+const FASTENERS = {
+  M2: { clear: 2.4, tap: 1.6, pitch: 0.4, cb: 4.4, cbDepth: 2.4, csk: 4.4 },
+  "M2.5": { clear: 2.9, tap: 2.05, pitch: 0.45, cb: 5.5, cbDepth: 2.9, csk: 5.5 },
+  M3: { clear: 3.4, tap: 2.5, pitch: 0.5, cb: 6.5, cbDepth: 3.4, csk: 6.9 },
+  M4: { clear: 4.5, tap: 3.3, pitch: 0.7, cb: 8, cbDepth: 4.4, csk: 9.2 },
+  M5: { clear: 5.5, tap: 4.2, pitch: 0.8, cb: 10, cbDepth: 5.4, csk: 11.5 },
+  M6: { clear: 6.6, tap: 5, pitch: 1, cb: 11, cbDepth: 6.5, csk: 13.7 },
+  M8: { clear: 9, tap: 6.8, pitch: 1.25, cb: 15, cbDepth: 8.6, csk: 18.3 },
+  M10: { clear: 11, tap: 8.5, pitch: 1.5, cb: 18, cbDepth: 10.8, csk: 22.7 },
+  M12: { clear: 13.5, tap: 10.2, pitch: 1.75, cb: 20, cbDepth: 13, csk: 27.2 },
+};
+
+// Materials a part can be made from: density (g/cm³) for its weight, family for the shop's rules,
+// and the plate or sheet thicknesses suppliers stock (mm), offered as one-tap depths.
+const MATERIALS = {
+  al6061: { name: "Aluminium 6061", density: 2.7, family: "aluminium", stock: [1.5, 2, 3, 4, 5, 6, 8, 10, 12] },
+  steel: { name: "Mild steel", density: 7.85, family: "steel", stock: [1, 1.5, 2, 3, 4, 5, 6, 8, 10] },
+  ss304: { name: "Stainless 304", density: 8, family: "stainless", stock: [1, 1.5, 2, 3, 4, 5, 6] },
+  acrylic: { name: "Acrylic", density: 1.19, family: "acrylic", stock: [2, 3, 4, 5, 6, 8, 10] },
+  plywood: { name: "Birch plywood", density: 0.68, family: "wood", stock: [3, 4, 6, 9, 12, 18] },
+  pla: { name: "PLA (3D print)", density: 1.24, family: "plastic", stock: [] },
+};
+const PROCESSES = { cnc: "CNC mill", laser: "Laser / waterjet", sheet: "Sheet metal", print: "3D print" };
+const materialOf = key => MATERIALS[key] && (({ name, density, family }) => ({ name, density, family }))(MATERIALS[key]);
+
+// A spur gear's outline in mm round (0, 0): involute flanks at a 20° pressure angle, addendum m and
+// dedendum 1.25 m (ISO 53). The root between teeth is a straight chord, fine for cut and printed gears.
+function gearPoints(module, teeth, pressureDeg = 20) {
+  const pa = pressureDeg * Math.PI / 180, inv = a => Math.tan(a) - a, polar = (r, a) => [r * Math.cos(a), r * Math.sin(a)];
+  const r = module * teeth / 2, rb = r * Math.cos(pa), ra = r + module, rf = Math.max(r - 1.25 * module, module);
+  const flank = rho => Math.PI / (2 * teeth) + inv(pa) - inv(Math.acos(Math.min(1, rb / rho)));   // tooth half-angle at rho
+  const r0 = Math.max(rb, rf), steps = 6, pts = [];
+  const radii = Array.from({ length: steps + 1 }, (_, i) => r0 + (ra - r0) * i / steps);
+  for (let k = 0; k < teeth; k++) {
+    const c = 2 * Math.PI * k / teeth;
+    if (rf < rb) pts.push(polar(rf, c - flank(rb)));
+    radii.forEach(rho => pts.push(polar(rho, c - flank(rho))));
+    [...radii].reverse().forEach(rho => pts.push(polar(rho, c + flank(rho))));
+    if (rf < rb) pts.push(polar(rf, c + flank(rb)));
+  }
+  return pts;
+}
 
 function holeCallout(spec, count = 1) {
-  const n = count > 1 ? `${count}× ` : "", d = `Ø${fmt(spec.diameter)}`;
+  const n = count > 1 ? `${count}× ` : "", d = `Ø${fmt(spec.diameter)}`, m = spec.fastener ? `${spec.fastener} ` : "";
+  if (spec.kind === "tapped") return `${n}${spec.thread} ${spec.depth ? `↧ ${fmt(spec.depth)}` : "THRU"}`;
   if (spec.kind === "blind") return `${n}${d} ↧ ${fmt(spec.depth)}`;
-  if (spec.kind === "counterbore") return `${n}${d} THRU\n⌴ Ø${fmt(spec.cbDiameter)} ↧ ${fmt(spec.cbDepth)}`;
-  if (spec.kind === "countersink") return `${n}${d} THRU\n⌵ Ø${fmt(spec.cskDiameter)} × 90°`;
-  return `${n}${d} THRU`;
+  if (spec.kind === "counterbore") return `${n}${m}${d} THRU\n⌴ Ø${fmt(spec.cbDiameter)} ↧ ${fmt(spec.cbDepth)}`;
+  if (spec.kind === "countersink") return `${n}${m}${d} THRU\n⌵ Ø${fmt(spec.cskDiameter)} × 90°`;
+  return `${n}${m}${spec.fastener ? "clear " : ""}${d} THRU`;
 }
 
 const holeOf = el => el.customData?.part?.hole ? el.customData.part : null;
 const partDepth = profile => profile.customData?.part?.feature === "extrude" ? profile.customData.part.depthMm : null;
 
-// The widest circle a hole cuts, which must stay inside the profile.
+// The widest circle a hole cuts (or its thread), which must stay inside the profile.
 function holeFits(box, spec) {
-  const r = Math.max(spec.diameter, spec.cbDiameter || 0, spec.cskDiameter || 0) / 2;
+  const r = Math.max(spec.diameter, spec.cbDiameter || 0, spec.cskDiameter || 0, spec.nominal || 0) / 2;
   const cx = box.minX + spec.x, cy = box.minY + spec.y;
   return within(Array.from({ length: 24 }, (_, i) => ({ x: cx + r * Math.cos(i / 12 * Math.PI), y: cy + r * Math.sin(i / 12 * Math.PI) })), box.pts);
 }
 
 function holeProblem(box, depth, spec) {
+  if (spec.kind === "tapped" && !spec.thread) return "Pick a thread size, M2 to M12";
+  if (spec.kind === "tapped" && spec.depth && depth && spec.depth >= depth) return `Deeper than the part (${fmt(depth)} mm). Leave thread depth empty for through`;
   if (!(spec.diameter > 0)) return "Enter a diameter above 0 mm";
   if (!Number.isFinite(spec.x) || !Number.isFinite(spec.y)) return "Enter where the hole goes";
   if (spec.kind === "blind" && !(spec.depth > 0)) return "Enter a depth above 0 mm";
@@ -623,7 +686,7 @@ function holeOnSheet(f, box, spec) {
 // A hole's circle plus its blue notes: a centre mark and, on the first hole of a pattern or a lone hole,
 // its distances from the profile's left and bottom edges and a callout.
 function holeElements(f, profile, box, spec, { circle, gid, first, count = 1, extra = "" }) {
-  const { c, r } = holeOnSheet(f, box, spec);
+  const { c, r, k } = holeOnSheet(f, box, spec);
   const partGid = profile.groupIds.find(g => g.startsWith("part-"));
   const groupIds = partGid ? [gid, partGid] : [gid];
   const base = circle || convertToExcalidrawElements([{ type: "ellipse", x: 0, y: 0, width: 1, height: 1, strokeColor: INK, strokeWidth: 1.5 }])[0];
@@ -634,6 +697,10 @@ function holeElements(f, profile, box, spec, { circle, gid, first, count = 1, ex
     { type: "line", x: c.x - m, y: c.y, points: [[0, 0], [2 * m, 0]], strokeColor: BLUE, strokeWidth: 1 },
     { type: "line", x: c.x, y: c.y - m, points: [[0, 0], [0, 2 * m]], strokeColor: BLUE, strokeWidth: 1 },
   ];
+  if (spec.kind === "tapped" && spec.nominal) {         // the thread's major diameter, drawn dashed round the tap drill
+    const R = spec.nominal / 2 * k;
+    sk.push({ type: "ellipse", x: c.x - R, y: c.y - R, width: 2 * R, height: 2 * R, strokeColor: INK, strokeWidth: 1, strokeStyle: "dashed", backgroundColor: "transparent" });
+  }
   if (first) {
     const left = f.toPx([box.minX, box.minY + spec.y]).x, bottom = f.toPx([box.minX + spec.x, box.minY]).y;
     if (c.x - left > 12) sk.push(
@@ -791,6 +858,11 @@ function partSketch(elements) {
 
   const shape = el => {
     const d = dimsFor(el.id);
+    if (el.customData?.gear) {          // a gear is exact: its outline is made again from module and teeth, in mm
+      const { module, teeth } = el.customData.gear, b = bounds(outline(el).pts);
+      const [cx, cy] = P({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
+      return { type: "polygon", points: gearPoints(module, teeth).map(([x, y]) => [r2(cx + x), r2(cy + y)]), gear: { module, teeth } };
+    }
     if (isRound(el)) {
       const dia = d.find(k => k.kind === "diameter");
       const [l] = P({ x: el.x, y: 0 }), [r] = P({ x: el.x + el.width, y: 0 });
@@ -811,21 +883,25 @@ function partSketch(elements) {
     const owner = spec && byId.get(of);
     if (!owner) return shape(el);
     const box = profileBox(f, owner), { kind, diameter, x, y, ...more } = spec;
-    return { type: "hole", kind, center: [r2(box.minX + x), r2(box.minY + y)], diameter, ...more, ...(kind === "countersink" ? { cskAngle: 90 } : {}) };
+    return { id: el.id, type: "hole", kind, center: [r2(box.minX + x), r2(box.minY + y)], diameter, ...more, ...(kind === "countersink" ? { cskAngle: 90 } : {}) };
   };
 
+  const madeOf = part => ({ ...(part.material ? { material: materialOf(part.material) } : {}), ...(part.process ? { process: part.process } : {}) });
+  const bendsOf = el => els.filter(b => bendOf(b) && crosses(b, outline(el).pts))
+    .map(b => ({ id: b.id, a: P(lineEnds(b)[0]), b: P(lineEnds(b)[1]), ...bendOf(b) }));
   const features = profiles.map(el => {
     const part = el.customData.part;
     const holes = els.filter(h => holeOf(h)?.of === el.id).map(hole);
     if (part.feature === "revolve") {
       const axis = byId.get(part.axis);
       const ends = axis ? [axis.points[0], axis.points[axis.points.length - 1]].map(([px, py]) => P({ x: axis.x + px, y: axis.y + py })) : null;
-      return { id: el.id, type: "revolve", angle: part.angleDeg, axis: ends, profile: shape(el), holes, ...(part.boltCircle ? { boltCircle: part.boltCircle } : {}) };
+      return { id: el.id, type: "revolve", angle: part.angleDeg, axis: ends, profile: shape(el), holes, ...madeOf(part), ...(part.boltCircle ? { boltCircle: part.boltCircle } : {}) };
     }
     const edge = part.topEdge ? { edge: part.topEdge } : {};
     if (part.feature === "boss") return { id: el.id, type: "boss", on: part.on, height: part.heightMm, profile: shape(el), holes, ...edge };
     if (part.feature === "pocket") return { id: el.id, type: "pocket", on: part.on, depth: part.depthMm, profile: shape(el), holes };
-    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes, ...edge };
+    const bends = bendsOf(el);
+    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes, ...edge, ...madeOf(part), ...(bends.length ? { bends } : {}) };
   });
 
   const used = new Set([...profiles.map(el => el.id), ...els.filter(el => profiles.some(p => p.id === holeOf(el)?.of)).map(el => el.id)]);
@@ -836,31 +912,10 @@ function partSketch(elements) {
     features,
     dimensions: dims.map(d => ({ target: d.target, kind: d.kind, edge: d.edge, mm: d.mm })),
     conflicts: f.conflicts.map(d => ({ target: d.target, edge: d.edge, mm: d.mm })),
-    other: geometry.filter(el => !used.has(el.id)).map(el => ({ id: el.id, role: holeOf(el) ? "hole" : el.strokeStyle === "dashed" ? "centre line" : "sketch", ...(holeOf(el) ? hole(el) : shape(el)) })),
+    other: geometry.filter(el => !used.has(el.id)).map(el => ({ id: el.id,
+      role: holeOf(el) ? "hole" : bendOf(el) ? "bend" : el.strokeStyle === "dashed" ? "centre line" : "sketch", ...(holeOf(el) ? hole(el) : shape(el)) })),
     notes: els.filter(el => el.type === "text" && !isNote(el)).map(el => ({ text: el.text, at: P({ x: el.x, y: el.y }) })),
   };
-}
-
-// DXF export: every outline in mm with Y up, using the dimension scale.
-// Plain R12-style entities that AutoCAD, Fusion and most CAD programs open.
-function toDxf(elements) {
-  const s = mmPerPx(elements);
-  const out = [];
-  const ent = (type, pairs) => { out.push("0", type); pairs.forEach(([code, val]) => out.push(String(code), String(val))); };
-  const X = x => (x * s).toFixed(3), Y = y => (-y * s).toFixed(3);
-  for (const el of elements) {
-    if (el.isDeleted) continue;
-    if (el.type === "text") {
-      ent("TEXT", [[8, 0], [10, X(el.x)], [20, Y(el.y + el.fontSize)], [40, (el.fontSize * s).toFixed(3)], [1, el.text]]);
-    } else if (el.type === "ellipse" && Math.abs(el.width - el.height) < 1) {
-      const c = centreOf(el);
-      ent("CIRCLE", [[8, 0], [10, X(c.x)], [20, Y(c.y)], [40, (el.width / 2 * s).toFixed(3)]]);
-    } else {
-      const o = outline(el);
-      if (o) ent("LWPOLYLINE", [[8, 0], [90, o.pts.length], [70, o.closed ? 1 : 0], ...o.pts.flatMap(p => [[10, X(p.x)], [20, Y(p.y)]])]);
-    }
-  }
-  return ["0", "SECTION", "2", "ENTITIES", ...out, "0", "ENDSEC", "0", "EOF", ""].join("\n");
 }
 
 // ---- Tools. Each one reports what it did, or why it could not run. ----
@@ -935,6 +990,72 @@ function cornerLimit(f, el, picked, kind) {
   }));
 }
 
+// ---- Sheet metal ----
+// A bend line is a dotted blue line with customData.bend = { angle (°), up (seen from the sketch), radius (inside, mm) }.
+// It folds the flat sheet it is drawn across: the profile marked Extrude that it crosses.
+const bendOf = el => !el.isDeleted && el.customData?.bend ? el.customData.bend : null;
+const bendFields = b => ({ angle: fmt(b.angle), up: b.up ? "up" : "down", radius: fmt(b.radius) });
+const sheetOf = (api, line) => live(api).find(el => el.customData?.part?.feature === "extrude" && crosses(line, outline(el).pts));
+// The usual inside radius for a bend is the sheet's thickness.
+const sheetAt = (api, line) => sheetOf(api, line)?.customData.part.depthMm ?? 2;
+const defaultProcess = (material, bends) => bends ? "sheet" : material === "pla" ? "print" : ["acrylic", "plywood"].includes(material) ? "laser" : "cnc";
+
+function writeBend(api, line, bend) {
+  const kept = api.getSceneElements().filter(e => !(e.customData?.note === "bend" && e.customData.of === line.id));
+  if (!bend) return commit(api, kept.filter(e => e.id !== line.id));
+  const [a, b] = lineEnds(line), top = a.y < b.y ? a : b;
+  const [label] = convertToExcalidrawElements([{ type: "text", x: top.x + 6, y: top.y - 22, fontSize: 13, strokeColor: BLUE,
+    text: `BEND ${bend.up ? "UP" : "DOWN"} ${fmt(bend.angle)}° R${fmt(bend.radius)}` }]);
+  commit(api, [...kept.map(e => e.id === line.id ? bump({ ...e, customData: { ...(e.customData || {}), bend } }) : e),
+    { ...label, groupIds: line.groupIds, customData: { note: "bend", of: line.id } }]);
+}
+
+// ---- Annotations follow their shape ----
+// Dimensions, labels and notes are separate elements, so when a shape is moved its notes are moved by
+// the same amount, and when it is reshaped its dimensions are drawn again on its new edges.
+function noteOwner(el, dimGroups) {
+  return el.customData?.dim?.target || el.customData?.of || (el.customData?.note === "dim" ? dimGroups.get(el.groupIds[0]) : null);
+}
+const shapeKey = el => JSON.stringify([el.width, el.height, el.angle, el.points]);
+
+function followNotes(api, elements, seen) {
+  const els = elements.filter(e => !e.isDeleted);
+  const dimGroups = new Map(els.filter(e => e.customData?.dim).map(e => [e.groupIds[0], e.customData.dim.target]));
+  const byId = new Map(els.map(e => [e.id, e]));
+  const moves = new Map(), redraw = new Set();
+  for (const el of els) {
+    const was = seen.get(el.id);
+    if (!was || isNote(el)) continue;
+    if (was.key !== shapeKey(el)) redraw.add(el.id);
+    else if (was.x !== el.x || was.y !== el.y) moves.set(el.id, { dx: el.x - was.x, dy: el.y - was.y });
+  }
+  // A hole follows its profile, and a hole's notes follow the hole, so a delta is found up that chain.
+  const deltaFor = (id, depth = 0) => moves.get(id) || (depth < 3 && holeOf(byId.get(id) || {})?.of ? deltaFor(holeOf(byId.get(id)).of, depth + 1) : null);
+  let next = null;
+  if (moves.size || redraw.size) {
+    const out = [];
+    for (const el of elements) {
+      const owner = el.isDeleted ? null : isNote(el) ? noteOwner(el, dimGroups) : holeOf(el)?.of;
+      const m = owner && deltaFor(owner), was = seen.get(el.id);
+      // A note that already moved with its shape (selected together, or in the same group) stays put.
+      if (m && !(was && (el.x - was.x === m.dx) && (el.y - was.y === m.dy))) out.push({ ...el, x: el.x + m.dx, y: el.y + m.dy, version: el.version + 1 });
+      else if (owner && redraw.has(owner) && el.customData?.note === "dim") continue;   // drawn again below
+      else out.push(el);
+    }
+    for (const id of redraw) {
+      const target = byId.get(id);
+      for (const t of els.filter(e => e.customData?.dim?.target === id)) {
+        const { target: _, ...dim } = t.customData.dim;
+        if (target && measure(target, dim) > 0) out.push(...dimensionElements(target, dim));
+      }
+    }
+    next = out;
+    api.updateScene({ elements: out, captureUpdate: CaptureUpdateAction.EVENTUALLY });   // part of the same undo step as the move
+  }
+  seen.clear();
+  for (const el of next || elements) if (!el.isDeleted) seen.set(el.id, { x: el.x, y: el.y, key: shapeKey(el) });
+}
+
 function writeCorners(api, el, corners) {
   const o = outline(el), c = o.pts.reduce((t, q) => ({ x: t.x + q.x / o.pts.length, y: t.y + q.y / o.pts.length }), { x: 0, y: 0 });
   const partGid = el.groupIds.find(g => g.startsWith("part-"));
@@ -949,16 +1070,6 @@ function writeCorners(api, el, corners) {
 
 function toggleGrid(api) {
   api.updateScene({ appState: { gridModeEnabled: !api.getAppState().gridModeEnabled } });
-}
-
-// DXF: download the drawing as a CAD file.
-function exportDxf(api, flash) {
-  const url = URL.createObjectURL(new Blob([toDxf(api.getSceneElements())], { type: "application/dxf" }));
-  const a = document.createElement("a");
-  a.href = url; a.download = "drawing.dxf";
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  flash("DXF downloaded");
 }
 
 // The sidebar follows the order of the work: sketch the outline, size it, then make it a part.
@@ -976,11 +1087,17 @@ const SECTIONS = [
     { label: "Round", icon: "Frame", mode: "round" },
     { label: "Hole", icon: "Crosshairs", mode: "hole" },
     { label: "Pattern", icon: "Category", mode: "pattern" },
+    { label: "Bend", icon: "Bend", mode: "bend" },
+    { label: "Gear", icon: "Gear", mode: "gear" },
   ] },
 ];
 
+const DRAWN = ["centre", "bend"];      // tools that wait for a line to be drawn rather than a tap
+
 const PICK_HINTS = {
   centre: "Draw the centre line",
+  bend: "Draw the bend line across the sheet",
+  gear: "Tap where the gear's centre goes",
   mirror: "Tap the shape to mirror",
   profile: "Tap inside the outline to make it a part, or a shape on a part for a boss or pocket",
   round: "Tap a corner to round or chamfer it",
@@ -1006,6 +1123,13 @@ const Num = ({ label, value, onChange, autoFocus }) => (
       onFocus={e => e.target.select()} onChange={e => onChange(e.target.value)} />
   </label>
 );
+const Pick = ({ label, value, options, onChange }) => (
+  <label>{label}
+    <select value={value} onChange={e => onChange(e.target.value)}>
+      {Object.entries(options).map(([k, text]) => <option key={k} value={k}>{text}</option>)}
+    </select>
+  </label>
+);
 const Seg = ({ label, options, value, onChange }) => (
   <div className="eng-seg" role="radiogroup" aria-label={label}>
     {Object.entries(options).map(([k, text]) => (
@@ -1026,10 +1150,12 @@ function App() {
   const [picking, setPicking] = useState(null);   // the tool waiting for a tap: "dim", "hole" or "pattern"
   const pickingRef = useRef(null);
   const lastHole = useRef({ kind: "through", diameter: "6" });   // a new hole starts like the last one
+  const lastPart = useRef({ material: "al6061" });                 // a new part starts in the last material
+  const seen = useRef(new Map());                                  // where each shape was, so its notes can follow it
+  const [made, setMade] = useState(null);                          // the laptop's latest build: weight and checks
   const seenStrokes = useRef(new Set());   // freedraw ids already seen in onChange
   const activeStroke = useRef(null);       // the freedraw stroke being drawn now
   const holdPending = useRef(null);        // "held" when a pen lifts after being still, "lift" otherwise
-  const [autoSnap, setAutoSnap] = useState(true);   // snap lines, arcs, circles and rectangles on lift
   const pressAt = useRef(null);            // where and when the current pen press went still
 
   // Every tool reports through here. kind is "ok" or "warn" (the tool could not run).
@@ -1041,8 +1167,8 @@ function App() {
   };
 
   const setPick = mode => {
-    if (pickingRef.current === "centre" && !mode) api?.setActiveTool({ type: "selection" });
-    if (mode === "centre") api.setActiveTool({ type: "line" });   // Centre line waits for a drawn line, not a tap
+    if (DRAWN.includes(pickingRef.current) && !mode) api?.setActiveTool({ type: "selection" });
+    if (DRAWN.includes(mode)) api.setActiveTool({ type: "line" });   // Centre line and Bend wait for a drawn line, not a tap
     pickingRef.current = mode;
     setPicking(mode);
     if (mode) flash(PICK_HINTS[mode], "ok", true);
@@ -1059,6 +1185,7 @@ function App() {
     else if (mode === "pattern") pickPattern(p, tol);
     else if (mode === "mirror") pickMirror(p, tol);
     else if (mode === "round") pickRound(p, tol);
+    else if (mode === "gear") setDialog({ type: "gear", at: p, module: "2", teeth: "20", bore: "8", thickness: "6", material: lastPart.current.material });
     else pickProfile(p, tol);
   };
 
@@ -1075,8 +1202,11 @@ function App() {
     const base = closedShapes(live(api)).filter(o => o.id !== el.id && SOLID.includes(o.customData?.part?.feature) && within(pts, outline(o).pts))
       .sort((a, b) => area(outline(a).pts) - area(outline(b).pts))[0] || null;
     const mode = was?.feature && (base || !["boss", "pocket"].includes(was.feature)) ? was.feature : base ? "boss" : plan.axis ? "revolve" : "extrude";
+    const material = was?.material || lastPart.current.material;
+    const bends = live(api).some(b => bendOf(b) && crosses(b, pts));
     setDialog({ type: "part", plan, base, mode, depth: fmt(was?.depthMm ?? was?.heightMm ?? (base ? 5 : 10)), angle: fmt(was?.angleDeg ?? 360),
-      edgeKind: was?.topEdge?.kind || "none", edgeSize: fmt(was?.topEdge?.size ?? 1) });
+      edgeKind: was?.topEdge?.kind || "none", edgeSize: fmt(was?.topEdge?.size ?? 1),
+      material, process: was?.process || (bends ? "sheet" : lastPart.current.process) || defaultProcess(material, bends) });
   };
 
   const pickRound = (p, tol) => {
@@ -1134,7 +1264,8 @@ function App() {
   const holeDialog = (profile, hole, spec) => {
     const st = v => v === undefined ? "" : fmt(v);
     const d = parseFloat(spec.diameter) || 6;
-    setDialog({ type: "hole", profile, hole, kind: spec.kind, diameter: st(d), x: st(spec.x), y: st(spec.y),
+    setDialog({ type: "hole", profile, hole, kind: spec.kind, size: spec.fastener || (spec.kind === "tapped" ? "M5" : "custom"),
+      diameter: st(d), x: st(spec.x), y: st(spec.y),
       depth: st(spec.depth ?? d * 1.5), cbDiameter: st(spec.cbDiameter ?? Math.round(d * 1.8)), cbDepth: st(spec.cbDepth ?? Math.round(d * 0.6 * 2) / 2),
       cskDiameter: st(spec.cskDiameter ?? d * 2), pattern: holeOf(hole || {})?.pattern || null });
   };
@@ -1172,12 +1303,18 @@ function App() {
   };
 
   // Hole dialog values as a spec, keeping only the fields its kind uses.
+  // With a fastener size picked, its sizes come from the standards; Custom takes the typed sizes.
   const holeSpec = d => {
-    const n = k => parseFloat(d[k]);
-    const spec = { kind: d.kind, diameter: n("diameter"), x: n("x"), y: n("y") };
+    const n = k => parseFloat(d[k]), F = FASTENERS[d.size];
+    const spec = { kind: d.kind, diameter: F ? (d.kind === "tapped" ? F.tap : F.clear) : n("diameter"), x: n("x"), y: n("y") };
+    if (F) spec.fastener = d.size;
+    if (d.kind === "tapped") {
+      if (F) Object.assign(spec, { thread: `${d.size}×${F.pitch}`, nominal: parseFloat(d.size.slice(1)) });
+      if (n("depth") > 0) spec.depth = n("depth");
+    }
     if (d.kind === "blind") spec.depth = n("depth");
-    if (d.kind === "counterbore") Object.assign(spec, { cbDiameter: n("cbDiameter"), cbDepth: n("cbDepth") });
-    if (d.kind === "countersink") spec.cskDiameter = n("cskDiameter");
+    if (d.kind === "counterbore") Object.assign(spec, F ? { cbDiameter: F.cb, cbDepth: F.cbDepth } : { cbDiameter: n("cbDiameter"), cbDepth: n("cbDepth") });
+    if (d.kind === "countersink") spec.cskDiameter = F ? F.csk : n("cskDiameter");
     return spec;
   };
   const patternOf = d => ({ mode: d.mode, count: parseInt(d.count, 10), spacing: parseFloat(d.spacing), dir: d.dir });
@@ -1203,6 +1340,19 @@ function App() {
     if (dialog.type === "bolts") {
       const rf = revolveFrame(sheetFrame(api.getSceneElements()), dialog.profile);
       return rf ? boltProblem(rf, boltsOf(dialog)) : "This revolve's centre line was deleted";
+    }
+    if (dialog.type === "bend") {
+      const a = parseFloat(dialog.angle), r = parseFloat(dialog.radius);
+      if (!(a > 0 && a <= 180)) return "Enter an angle from 1 to 180°";
+      if (!(r >= 0)) return "Enter an inside radius of 0 mm or more";
+      return null;
+    }
+    if (dialog.type === "gear") {
+      const m = parseFloat(dialog.module), z = Number(dialog.teeth), bore = parseFloat(dialog.bore) || 0, t = parseFloat(dialog.thickness);
+      if (!(Number.isInteger(z) && z >= 8 && z <= 200)) return "Enter 8 to 200 teeth";
+      if (!(t > 0)) return "Enter a thickness above 0 mm";
+      if (bore >= m * (z - 2.5) - 2 * m) return `The bore must leave material under the teeth: under Ø${fmt(Math.max(0, m * (z - 4.5)))} mm`;
+      return null;
     }
     return null;
   })();
@@ -1254,7 +1404,7 @@ function App() {
       }
       if (e.pointerType === "touch" && api.getAppState().penMode) return;   // fingers never pick or snap
       penId = e.pointerId;
-      if (pickingRef.current && pickingRef.current !== "centre") {
+      if (pickingRef.current && !DRAWN.includes(pickingRef.current)) {
         e.stopPropagation(); e.preventDefault();
         pressAt.current = null;
         return pickTap(e);
@@ -1300,6 +1450,7 @@ function App() {
 
   // Every board change: remember the newest pen stroke, and snap it if it was held still.
   const handleChange = (elements, appState) => {
+    if (api) followNotes(api, elements, seen.current);
     bridgeRef.current?.changed(elements);
     setGridOn(!!appState.gridModeEnabled);
     setEmpty(!elements.some(e => !e.isDeleted));
@@ -1311,7 +1462,7 @@ function App() {
       const held = holdPending.current === "held";
       holdPending.current = null;
       const el = elements.find(e => e.id === activeStroke.current && e.type === "freedraw" && !e.isDeleted);
-      if (el && (held || autoSnap)) snapStroke(api, el, flash, held);
+      if (el) snapStroke(api, el, flash, held);   // held: make it a clean shape; lifted: only a tap is cleared
     }
     // A line just finished: tidy it, and if Centre line was waiting, make it the centre line.
     if (api && !appState.multiElement && !appState.newElement && !appState.editingLinearElement) {
@@ -1319,8 +1470,10 @@ function App() {
       if (!done.length) return;
       done.forEach(e => tidyLines.add(e.id));
       const fixed = new Map(done.map(e => [e.id, tidyLine(api, e)]).filter(([, t]) => t));
-      const centre = pickingRef.current === "centre" ? done[done.length - 1] : null;
-      if (centre) fixed.set(centre.id, bump({ ...(fixed.get(centre.id) || centre), strokeStyle: "dashed", strokeColor: BLUE, strokeWidth: 1 }));
+      const centre = DRAWN.includes(pickingRef.current) ? done[done.length - 1] : null;
+      const bend = centre && pickingRef.current === "bend";
+      if (centre) fixed.set(centre.id, bump({ ...(fixed.get(centre.id) || centre), strokeStyle: bend ? "dotted" : "dashed", strokeColor: BLUE, strokeWidth: 1,
+        ...(bend ? { customData: { bend: { angle: 90, up: true, radius: sheetAt(api, centre) } } } : {}) }));
       let scene = api.getSceneElements().map(e => fixed.get(e.id) || e), merged = false, closedOne = false;
       for (const d of done) {
         const joined = d !== centre && joinLines(scene, scene.find(e => e.id === d.id));
@@ -1328,7 +1481,8 @@ function App() {
       }
       if (fixed.size || merged) commit(api, scene);
       if (closedOne && !centre) flash("Outline closed");
-      if (centre) { setPick(null); flash("Centre line added"); }
+      if (centre && bend) { setPick(null); setDialog({ type: "bend", line: centre.id, ...bendFields(fixed.get(centre.id).customData.bend) }); }
+      else if (centre) { setPick(null); flash("Centre line added"); }
     }
   };
 
@@ -1355,14 +1509,16 @@ function App() {
       if (!(d > 0)) return flash(`Enter a ${mode === "boss" ? "height" : "depth"} above 0 mm`, "warn");
       if (mode !== "extrude" && !dialog.base) return flash("Draw it inside a part to stack it on top", "warn");
       const feature = mode === "boss" ? { feature: "boss", heightMm: d, on: dialog.base.id }
-        : mode === "pocket" ? { feature: "pocket", depthMm: d, on: dialog.base.id } : { feature: "extrude", depthMm: d };
+        : mode === "pocket" ? { feature: "pocket", depthMm: d, on: dialog.base.id }
+        : { feature: "extrude", depthMm: d, material: dialog.material, process: dialog.process };
+      if (mode === "extrude") lastPart.current = { material: dialog.material, process: dialog.process };
       applyPart(api, plan, edge ? { ...feature, topEdge: edge } : feature, flash);
     } else {
       const a = parseFloat(dialog.angle);
       if (!(a > 0 && a <= 360)) return flash("Enter an angle from 1 to 360°", "warn");
       if (!plan.axis) return flash("Draw a centre line beside the profile to revolve round it", "warn");
       if (plan.crossesAxis) return flash("The profile crosses the centre line. Keep it on one side to revolve", "warn");
-      applyPart(api, plan, { feature: "revolve", angleDeg: a }, flash);
+      applyPart(api, plan, { feature: "revolve", angleDeg: a, material: dialog.material, process: dialog.process }, flash);
     }
     setDialog(null);
   };
@@ -1383,7 +1539,7 @@ function App() {
     if (problem) return;
     const spec = holeSpec(dialog);
     writeHole(api, dialog.profile, dialog.hole, spec, dialog.pattern);
-    lastHole.current = { kind: spec.kind, diameter: dialog.diameter };
+    lastHole.current = { kind: spec.kind, diameter: dialog.diameter, fastener: spec.fastener };
     flash(dialog.hole ? "Hole changed" : `Hole added: ${holeCallout(spec).replace("\n", ", ")}`);
     setDialog(null);
   };
@@ -1438,7 +1594,64 @@ function App() {
       if (shapes.length) return mirrorShapes(api, shapes, flash, sel.find(isCentreLine));
     }
     if (mode === "profile" && closedShapes(sel).length) return openPart(planPart(api, closedShapes(sel), sel.find(isCentreLine)));
+    const bendLine = mode === "bend" && sel.find(el => bendOf(el));
+    if (bendLine) return setDialog({ type: "bend", line: bendLine.id, ...bendFields(bendOf(bendLine)) });
     setPick(mode);
+  };
+
+  // Bend: the angle, direction and inside radius of a bend line (Remove deletes it)
+  const confirmBend = remove => {
+    const line = live(api).find(e => e.id === dialog.line);
+    if (!line) return setDialog(null);
+    if (remove) { writeBend(api, line, null); flash("Bend removed"); return setDialog(null); }
+    if (problem) return;
+    const bend = { angle: parseFloat(dialog.angle), up: dialog.up === "up", radius: parseFloat(dialog.radius) };
+    writeBend(api, line, bend);
+    flash(sheetOf(api, line) ? `Bend ${dialog.up} ${fmt(bend.angle)}° R${fmt(bend.radius)}` : "Bend set. Mark the sheet it crosses as a Profile to fold it", sheetOf(api, line) ? "ok" : "warn");
+    setDialog(null);
+  };
+
+  // Gear: an involute spur gear drawn at the tap, marked as a part of its thickness, with its bore
+  const confirmGear = () => {
+    if (problem) return;
+    const m = parseFloat(dialog.module), z = parseInt(dialog.teeth, 10), bore = parseFloat(dialog.bore) || 0, t = parseFloat(dialog.thickness);
+    const s = mmPerPx(api.getSceneElements()), at = dialog.at;
+    const pts = gearPoints(m, z).map(([x, y]) => ({ x: at.x + x / s, y: at.y - y / s }));
+    const [gear] = convertToExcalidrawElements([{ ...polyline(pts, true, {}), strokeColor: INK, strokeWidth: 1.5 }]);
+    commit(api, [...api.getSceneElements(), { ...gear, customData: { gear: { module: m, teeth: z } } }]);
+    const plan = planPart(api, [live(api).find(e => e.id === gear.id)], null);
+    plan.axis = null;
+    lastPart.current = { ...lastPart.current, material: dialog.material };
+    applyPart(api, plan, { feature: "extrude", depthMm: t, material: dialog.material, process: defaultProcess(dialog.material) }, flash);
+    if (bore > 0) {
+      const profile = live(api).find(e => e.id === gear.id), box = profileBox(sheetFrame(api.getSceneElements()), profile);
+      writeHole(api, profile, null, { kind: "through", diameter: bore, x: r2((box.maxX - box.minX) / 2), y: r2((box.maxY - box.minY) / 2) });
+    }
+    setDialog(null);
+    flash(`Gear m${fmt(m)}, ${z} teeth: Ø${fmt(m * z)} pitch, Ø${fmt(m * (z + 2))} outside`);
+  };
+
+  // What the laptop made of the drawing: its weight, and what a shop would flag. Read once the laptop
+  // has the latest drawing, and again a moment later, as building the part takes a little longer.
+  useEffect(() => {
+    if (link.state !== "live" || !bridgeRef.current) return;
+    const read = async () => {
+      const res = await fetch(`/api/model/info?session=${bridgeRef.current.session}`).catch(() => null);
+      if (res?.ok) setMade(await res.json());
+      else if (res?.status === 404) setMade(null);
+    };
+    const t1 = setTimeout(read, 500), t2 = setTimeout(read, 1800);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [link]);
+
+  // A check points at a shape: select it and bring it into view.
+  const showCheck = c => {
+    const el = c.target && live(api).find(e => e.id === c.target);
+    if (el) {
+      api.updateScene({ appState: { selectedElementIds: { [el.id]: true } } });
+      api.scrollToContent(el, { animate: true });
+    }
+    flash(c.message, c.level === "warn" ? "warn" : "ok");
   };
 
   // 3D file: download the live 3D model the laptop built from this drawing, or open it in the laptop's slicer.
@@ -1451,6 +1664,11 @@ function App() {
   const downloadModel = async () => {
     const format = dialog.format;
     if (!(await modelOf())) return flash("No 3D part yet. Draw a closed outline first", "warn");
+    if (format === "svg") {   // the shop drawing opens in its own tab, to look at or print
+      window.open(`/api/model?session=${bridgeRef.current.session}&format=svg`, "_blank");
+      setDialog(null);
+      return flash("Shop drawing opened");
+    }
     const a = document.createElement("a");
     a.href = `/api/model?session=${bridgeRef.current.session}&format=${format}&download=1`;
     a.download = "";
@@ -1513,19 +1731,23 @@ function App() {
           <button onClick={() => toggleGrid(api)} aria-pressed={gridOn} className={gridOn ? "on" : ""} title="Snap to grid">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Grid }} /><span>Grid</span>
           </button>
-          <button onClick={() => setAutoSnap(v => !v)} aria-pressed={autoSnap} className={autoSnap ? "on" : ""}
-            title="Straighten lines, arcs, circles and rectangles when the Pencil lifts">
-            <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.VectorSquare }} /><span>Snap</span>
-          </button>
-          <button onClick={() => api && exportDxf(api, flash)} title="Download the drawing as DXF">
-            <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Upload }} /><span>DXF</span>
-          </button>
           <button onClick={() => setDialog({ type: "print", format: "stl" })} title="Download the 3D part, or print it">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Squares }} /><span>3D file</span>
           </button>
         </div>
         <div className="eng-send">
           <p className={"eng-link " + link.state} role="status" aria-live="polite">{link.text}</p>
+          {made?.status === "ok" && !made.preview && (
+            <p className="eng-made">{made.material ? `${made.material.name} · ${fmt(made.mass)} g` : `${fmt(made.volume / 1000)} cm³ · no material set`}</p>
+          )}
+          {made?.checks?.length > 0 && (
+            <ul className="eng-checks" aria-label="Manufacturing checks">
+              {made.checks.slice(0, 4).map((c, i) => (
+                <li key={i}><button type="button" className={c.level} onClick={() => showCheck(c)}>{c.message}</button></li>
+              ))}
+              {made.checks.length > 4 && <li className="more">+{made.checks.length - 4} more</li>}
+            </ul>
+          )}
         </div>
       </aside>
 
@@ -1541,8 +1763,23 @@ function App() {
           actions={<><button type="button" onClick={close}>Cancel</button><button type="submit" className="primary">Mark</button></>}>
           <Seg label="Feature" options={dialog.base ? { boss: "Boss", pocket: "Pocket", extrude: "Extrude", revolve: "Revolve" } : { extrude: "Extrude", revolve: "Revolve" }}
             value={dialog.mode} onChange={m => setDialog(d => ({ ...d, mode: m }))} />
+          {["extrude", "revolve"].includes(dialog.mode) && (
+            <div className="eng-row">
+              <Pick label="Material" value={dialog.material} options={Object.fromEntries(Object.entries(MATERIALS).map(([k, m]) => [k, m.name]))}
+                onChange={v => setDialog(d => ({ ...d, material: v, process: d.process === defaultProcess(d.material) ? defaultProcess(v) : d.process }))} />
+              <Pick label="Made by" value={dialog.process} options={PROCESSES} onChange={v => setDialog(d => ({ ...d, process: v }))} />
+            </div>
+          )}
           {dialog.mode === "revolve" ? <Num label="Angle (°)" {...field("angle")} />
-            : <Num label={dialog.mode === "boss" ? "Height (mm)" : "Depth (mm)"} autoFocus {...field("depth")} />}
+            : <Num label={dialog.mode === "boss" ? "Height (mm)" : dialog.mode === "extrude" ? "Thickness (mm)" : "Depth (mm)"} autoFocus {...field("depth")} />}
+          {dialog.mode === "extrude" && MATERIALS[dialog.material].stock.length > 0 && (
+            <div className="eng-chips" role="group" aria-label="Stock thicknesses">
+              {MATERIALS[dialog.material].stock.map(t => (
+                <button type="button" key={t} className={parseFloat(dialog.depth) === t ? "on" : ""}
+                  onClick={() => setDialog(d => ({ ...d, depth: String(t) }))}>{t}</button>
+              ))}
+            </div>
+          )}
           {SOLID.includes(dialog.mode) && <>
             <Seg label="Top edges" options={{ none: "Sharp edges", fillet: "Round", chamfer: "Chamfer" }} value={dialog.edgeKind}
               onChange={k => setDialog(d => ({ ...d, edgeKind: k }))} />
@@ -1566,13 +1803,17 @@ function App() {
             <button type="button" onClick={close}>Cancel</button>
             <button type="submit" className="primary" disabled={!!problem}>{dialog.hole ? "Update" : "Add hole"}</button>
           </>}>
-          <Seg label="Hole type" options={HOLE_KINDS} value={dialog.kind} onChange={k => setDialog(d => ({ ...d, kind: k }))} />
+          <Seg label="Hole type" options={HOLE_KINDS} value={dialog.kind}
+            onChange={k => setDialog(d => ({ ...d, kind: k, size: k === "tapped" && d.size === "custom" ? "M5" : d.size, depth: k === "tapped" ? "" : d.depth }))} />
           <div className="eng-row">
-            <Num label="Diameter (mm)" autoFocus {...field("diameter")} />
+            <Pick label={dialog.kind === "tapped" ? "Thread" : "Fastener"} value={dialog.size} onChange={v => setDialog(d => ({ ...d, size: v }))}
+              options={{ ...(dialog.kind === "tapped" ? {} : { custom: "Custom size" }), ...Object.fromEntries(Object.keys(FASTENERS).map(m => [m, m])) }} />
+            {dialog.size === "custom" && <Num label="Diameter (mm)" autoFocus {...field("diameter")} />}
             {dialog.kind === "blind" && <Num label="Depth (mm)" {...field("depth")} />}
-            {dialog.kind === "countersink" && <Num label="Countersink Ø" {...field("cskDiameter")} />}
+            {dialog.kind === "tapped" && <Num label="Thread depth (blank: through)" {...field("depth")} />}
+            {dialog.kind === "countersink" && dialog.size === "custom" && <Num label="Countersink Ø" {...field("cskDiameter")} />}
           </div>
-          {dialog.kind === "counterbore" && (
+          {dialog.kind === "counterbore" && dialog.size === "custom" && (
             <div className="eng-row"><Num label="Counterbore Ø" {...field("cbDiameter")} /><Num label="Counterbore depth" {...field("cbDepth")} /></div>
           )}
           <div className="eng-row">
@@ -1615,8 +1856,43 @@ function App() {
       {dialog?.type === "print" && (
         <Dialog onClose={close} label="3D file" onSubmit={downloadModel}
           actions={<><button type="button" onClick={printModel}>Print on laptop</button><button type="submit" className="primary">Download</button></>}>
-          <Seg label="Format" options={{ stl: "STL", "3mf": "3MF", step: "STEP" }} value={dialog.format} onChange={f => setDialog(d => ({ ...d, format: f }))} />
-          {note(dialog.format === "step" ? "STEP keeps exact curves, for other CAD programs" : "For a slicer and a 3D printer")}
+          <Seg label="Format" options={{ stl: "STL", "3mf": "3MF", step: "STEP", dxf: "DXF", svg: "Drawing" }} value={dialog.format} onChange={f => setDialog(d => ({ ...d, format: f }))} />
+          {note({ step: "STEP keeps exact curves, for CNC and other CAD programs", dxf: "The flat profile for laser, waterjet or plasma; a bent part's flat pattern with its bend lines",
+            svg: "A shop drawing: sizes, hole table, material and notes, ready to print" }[dialog.format] || "For a slicer and a 3D printer")}
+        </Dialog>
+      )}
+
+      {dialog?.type === "bend" && (
+        <Dialog onClose={close} label="Bend" onSubmit={() => confirmBend(false)}
+          actions={<>
+            <button type="button" className="danger" onClick={() => confirmBend(true)}>Remove</button>
+            <button type="button" onClick={close}>Cancel</button>
+            <button type="submit" className="primary" disabled={!!problem}>Set</button>
+          </>}>
+          <Seg label="Direction" options={{ up: "Up", down: "Down" }} value={dialog.up} onChange={v => setDialog(d => ({ ...d, up: v }))} />
+          <div className="eng-row">
+            <Num label="Angle (°)" autoFocus {...field("angle")} />
+            <Num label="Inside radius (mm)" {...field("radius")} />
+          </div>
+          {note("The side with less sheet folds, round the line, as on a press brake")}
+        </Dialog>
+      )}
+
+      {dialog?.type === "gear" && (
+        <Dialog onClose={close} label="Spur gear" onSubmit={confirmGear}
+          actions={<><button type="button" onClick={close}>Cancel</button><button type="submit" className="primary" disabled={!!problem}>Add gear</button></>}>
+          <div className="eng-row">
+            <Pick label="Module" value={dialog.module} options={{ "0.5": "0.5", 1: "1", "1.5": "1.5", 2: "2", "2.5": "2.5", 3: "3", 4: "4" }}
+              onChange={v => setDialog(d => ({ ...d, module: v }))} />
+            <Num label="Teeth" autoFocus {...field("teeth")} />
+          </div>
+          <div className="eng-row">
+            <Num label="Bore Ø (mm)" {...field("bore")} />
+            <Num label="Thickness (mm)" {...field("thickness")} />
+          </div>
+          <Pick label="Material" value={dialog.material} options={Object.fromEntries(Object.entries(MATERIALS).map(([k, m]) => [k, m.name]))}
+            onChange={v => setDialog(d => ({ ...d, material: v }))} />
+          {note(`Pitch Ø${fmt(parseFloat(dialog.module) * parseInt(dialog.teeth, 10) || 0)} mm, outside Ø${fmt(parseFloat(dialog.module) * ((parseInt(dialog.teeth, 10) || 0) + 2))} mm. Gears that mesh share a module`)}
         </Dialog>
       )}
 

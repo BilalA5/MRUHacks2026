@@ -113,7 +113,7 @@ def run(features, info):
         if process in ("laser", "sheet"):
             if second_op:
                 kinds = sorted({h["kind"] for h in second_op})
-                add("note", f"{len(second_op)} hole{'s' if len(second_op) > 1 else ''} ({', '.join(kinds)}) need a second operation: the laser only cuts straight through", f.get("id"))
+                add("note", f"{len(second_op)} hole{'s' if len(second_op) > 1 else ''} ({', '.join(kinds)}) need{'' if len(second_op) > 1 else 's'} a second operation: the laser only cuts straight through", f.get("id"))
             limit = LASER_MAX.get(family)
             if limit and t > limit:
                 add("warn", f"{t:g} mm is thick for laser cutting {family}; most shops cut up to {limit} mm, use waterjet or milling", f.get("id"))
