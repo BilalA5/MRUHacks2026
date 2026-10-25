@@ -5,12 +5,10 @@
 #   write_svg: a one-page shop drawing (A4 landscape, mm): the exact top view (or flat pattern) with overall
 #              sizes and tagged holes, an isometric view, a hole table, notes and a title block.
 import base64
-import math
 import time
 
 import cadquery as cq
 import ezdxf
-from cadquery import Vector
 from cadquery.occ_impl.exporters.svg import getSVG
 
 PAGE_W, PAGE_H = 297, 210
@@ -106,7 +104,7 @@ def write_svg(solid, features, info, path):
     from model import face, outline_points
     base = _base(features)
     revolved = next((f for f in features if f["type"] == "revolve"), None)
-    shapes, thin, dashed, tags = [], [], [], []
+    shapes, thin, dashed = [], [], []
     holes = []
     if base or not revolved:
         for f in features:
