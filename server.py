@@ -229,6 +229,16 @@ async def stream():
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
+# The canvas is checked against the server on every load (no-cache still lets the browser reuse an unchanged
+# file), so a browser never keeps running an old build after a pull and `npm run build`.
+@app.middleware("http")
+async def fresh_canvas(request: Request, call_next):
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # Serves web/index.html at "/" (must stay last so the /api routes win)
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 

@@ -1,4 +1,4 @@
-# Sets FreeCAD's preferences for a light, fast laptop screen. Edits user.cfg directly, so FreeCAD never
+# Sets FreeCAD's preferences for a light, fast laptop screen, and repairs a saved layout with its tools hidden. Edits user.cfg directly, so FreeCAD never
 # has to run; it must be closed, because it rewrites user.cfg when it quits. A backup is kept next to it.
 #   python3 freecad/lite.py
 import shutil
@@ -36,6 +36,17 @@ SETTINGS = {
     ],
 }
 
+# Saved window state that can leave FreeCAD with its tools missing, in every workbench: the layout and toolbar
+# and panel visibility saved while BoardSketch's focus mode had them hidden, and the overlay switch an earlier
+# version of this script turned off. Removing them gives FreeCAD back its own defaults.
+REPAIR = {
+    ("BaseApp", "Preferences", "DockWindows"): ["ActivateOverlay"],
+    ("BaseApp", "Preferences", "MainWindow"): ["MainWindowState"],
+    ("BaseApp", "MainWindow", "Toolbars"): "all",
+    ("BaseApp", "MainWindow", "DockWindows"): ["Std_ComboView", "Std_TaskView", "Std_ReportView", "Std_PythonView",
+                                               "Std_SelectionView", "Std_TreeView", "Std_PropertyView"],
+}
+
 
 def group(parent, name):
     for g in parent.findall("FCParamGroup"):
@@ -53,7 +64,14 @@ def main():
     else:
         CFG.parent.mkdir(parents=True, exist_ok=True)
         tree = ET.ElementTree(ET.fromstring('<FCParameters><FCParamGroup Name="Root"/></FCParameters>'))
-    prefs = group(group(group(tree.getroot(), "Root"), "BaseApp"), "Preferences")
+    root = group(tree.getroot(), "Root")
+    for path, names in REPAIR.items():
+        g = root
+        for name in path:
+            g = group(g, name)
+        for old in [e for e in g if e.tag != "FCParamGroup" and (names == "all" or e.get("Name") in names)]:
+            g.remove(old)
+    prefs = group(group(root, "BaseApp"), "Preferences")
     for path, entries in SETTINGS.items():
         g = group(prefs, path)
         for kind, name, value in entries:

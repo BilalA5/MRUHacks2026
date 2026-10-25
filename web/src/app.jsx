@@ -265,6 +265,11 @@ const HOLD_MS = 450;    // how long the pen must stay still before lifting
 const HOLD_MOVE = 8;    // screen px the pen may drift and still count as still
 const TAP_PX = 6;       // a stroke smaller than this is a Pencil tap, not a drawing
 const JOIN_PX = 12;     // line ends this close are joined into one line
+// A mouse or trackpad wobbles far more than a Pencil, and cannot easily be held still at the end of a stroke.
+// Its strokes get looser tolerances, and any outline whose ends meet snaps on lift, not only when held.
+// Sizes are in screen px (px = scene px per screen px), so snapping works the same at any zoom.
+const PEN = { px: 1, loose: false };
+const MOUSE = typeof matchMedia === "function" && matchMedia("(hover: hover) and (pointer: fine)").matches;   // a laptop, not the iPad
 
 // Ramer–Douglas–Peucker: the few corners that describe a hand-drawn path within eps px.
 function corners(pts, eps) {
@@ -304,9 +309,9 @@ function circleThrough(a, b, c) {
 
 // An open stroke that follows a circle: its points, every 7.5° from its start. A sweep within 10° of a
 // quarter or half turn is made exactly that, as drawings use them for rounded corners and slot ends.
-function recogniseArc(pts) {
+function recogniseArc(pts, { px, loose } = PEN) {
   const c = circleThrough(pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]);
-  if (!c || c.r > 2000 || !pts.every(p => Math.abs(dist(p, c) - c.r) <= Math.max(4, 0.08 * c.r))) return null;
+  if (!c || c.r > 2000 * px || !pts.every(p => Math.abs(dist(p, c) - c.r) <= Math.max((loose ? 8 : 4) * px, (loose ? 0.12 : 0.08) * c.r))) return null;
   const ang = p => Math.atan2(p.y - c.y, p.x - c.x);
   let sweep = 0;
   for (let i = 1; i < pts.length; i++) sweep += (ang(pts[i]) - ang(pts[i - 1]) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
@@ -320,38 +325,40 @@ function recogniseArc(pts) {
 // Returns {name, skeleton} for a line, arc, circle, rectangle, ellipse, triangle or straight-sided outline, or null.
 // Ellipses, triangles and other straight-sided outlines are only made from a held stroke (held), as a quick
 // sketch is often meant freehand.
-function recogniseStroke(pts, held = true) {
+function recogniseStroke(pts, held = true, by = PEN) {
+  const { px, loose } = by;
   const a = pts[0], b = pts[pts.length - 1];
   const { minX, maxX, minY, maxY } = bounds(pts);
   const w = maxX - minX, h = maxY - minY, size = Math.max(w, h);
-  if (size < 20) return null;
+  if (size < 20 * px) return null;
   const len = dist(a, b);
-  // A long line is allowed more wobble: 6 px, or 2.5% of its length
-  if (len >= 0.7 * size && Math.max(...pts.map(p => segDist(p, a, b))) <= Math.max(6, 0.025 * len)) {
+  // A long line is allowed more wobble: 6 px, or 2.5% of its length (12 px or 5% from a mouse)
+  if (len >= 0.7 * size && Math.max(...pts.map(p => segDist(p, a, b))) <= (loose ? Math.max(12 * px, 0.05 * len) : Math.max(6 * px, 0.025 * len))) {
     return { name: "line", skeleton: { type: "line", x: a.x, y: a.y, points: [[0, 0], [b.x - a.x, b.y - a.y]] } };
   }
   if (len > 0.25 * size) {
-    const arc = recogniseArc(pts);
+    const arc = recogniseArc(pts, by);
     return arc ? { name: "arc", skeleton: polyline(arc, false, {}) } : null;
   }
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   if (Math.min(w, h) / Math.max(w, h) >= 0.77) {          // closer to round than 1.3 : 1
     const r = (w + h) / 4;
     // A held stroke asked to be snapped, so a rougher loop still counts as a circle rather than a many-sided outline
-    if (pts.every(p => Math.abs(dist(p, { x: cx, y: cy }) - r) <= (held ? 0.25 : 0.15) * r)) {
+    if (pts.every(p => Math.abs(dist(p, { x: cx, y: cy }) - r) <= (held || loose ? 0.25 : 0.15) * r)) {
       return { name: "circle", skeleton: { type: "ellipse", x: cx - r, y: cy - r, width: 2 * r, height: 2 * r } };
     }
   }
-  const tol = 0.12 * Math.min(w, h);
+  const tol = (loose ? 0.16 : 0.12) * Math.min(w, h);
   const near = pts.filter(p => Math.min(Math.abs(p.x - minX), Math.abs(p.x - maxX), Math.abs(p.y - minY), Math.abs(p.y - maxY)) <= tol).length;
-  const outlineCorners = dropStraight(corners(pts, 0.05 * size).slice(0, -1));
-  if (w >= 20 && h >= 20 && Math.max(w, h) / Math.min(w, h) <= 4 && near / pts.length >= 0.85 && outlineCorners.length <= 4) {
+  const outlineCorners = dropStraight(corners(pts, (loose ? 0.07 : 0.05) * size).slice(0, -1));
+  if (w >= 20 * px && h >= 20 * px && Math.max(w, h) / Math.min(w, h) <= 4 && near / pts.length >= (loose ? 0.8 : 0.85) && outlineCorners.length <= 4) {
     return { name: "rectangle", skeleton: { type: "rectangle", x: minX, y: minY, width: w, height: h } };
   }
   // An oval: every point near the ellipse that fills the stroke's box
   const rx = w / 2, ry = h / 2;
-  if (held && rx > 10 && ry > 10 && outlineCorners.length > 4
-    && pts.every(p => Math.abs(Math.hypot((p.x - cx) / rx, (p.y - cy) / ry) - 1) <= 0.18)) {
+  held ||= loose;          // a mouse stroke whose ends meet is meant as a shape
+  if (held && rx > 10 * px && ry > 10 * px && outlineCorners.length > 4
+    && pts.every(p => Math.abs(Math.hypot((p.x - cx) / rx, (p.y - cy) / ry) - 1) <= (loose ? 0.22 : 0.18))) {
     return { name: "ellipse", skeleton: { type: "ellipse", x: minX, y: minY, width: w, height: h } };
   }
   if (held && outlineCorners.length === 3) {
@@ -366,12 +373,13 @@ function recogniseStroke(pts, held = true) {
 
 // Replaces a freehand stroke with the recognised shape, keeping its colour and stroke width.
 // held: the pen was held still at the end, so any outline may be made and a miss is reported.
-function snapStroke(api, el, flash, held) {
+// pointer: "pen", "mouse" or "touch", whatever drew the stroke.
+function snapStroke(api, el, flash, held, pointer = "pen") {
   const pts = el.points.map(([px, py]) => ({ x: el.x + px, y: el.y + py }));
   const others = api.getSceneElements().filter(e => e.id !== el.id);
-  const b = bounds(pts);
-  if (!held && Math.max(b.maxX - b.minX, b.maxY - b.minY) < TAP_PX) return commit(api, others);   // a tap, not a drawing
-  const found = recogniseStroke(pts, held);
+  const b = bounds(pts), by = { px: 1 / api.getAppState().zoom.value, loose: pointer !== "pen" };
+  if (!held && Math.max(b.maxX - b.minX, b.maxY - b.minY) < TAP_PX * by.px) return commit(api, others);   // a tap, not a drawing
+  const found = recogniseStroke(pts, held, by);
   if (!found) return held && flash("Held stroke is not a line, arc, circle, ellipse, rectangle, triangle or straight-sided outline", "warn");
   const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth, strokeStyle: el.strokeStyle };
   const [shape] = convertToExcalidrawElements([{ ...found.skeleton, ...style }]);
@@ -462,15 +470,20 @@ function applyPart(api, plan, feature, flash) {
     const edge = feature.topEdge ? `, top edges ${feature.topEdge.kind === "fillet" ? "R" : "C"}${fmt(feature.topEdge.size)}` : "";
     const text = { revolve: `Revolve ${fmt(feature.angleDeg)}°`, boss: `Boss ${fmt(feature.heightMm)} mm`,
       pocket: `Pocket ${fmt(feature.depthMm)} mm deep` }[feature.feature]
-      || `${fmt(feature.depthMm)} mm ${MATERIALS[feature.material]?.name || "plate"}${feature.process ? ` · ${PROCESSES[feature.process]}` : ""}`;
-    return { type: "text", x: b.minX, y: b.minY - 72, text: text + edge, fontSize: 14, strokeColor: BLUE };   // above, clear of dimensions and the centre line
+      || (feature.on ? `${fmt(feature.depthMm)} mm ${MATERIALS[feature.material]?.name || "plate"} · ${feature.place === "inside" ? "set in" : "on top"}`
+        : `${fmt(feature.depthMm)} mm ${MATERIALS[feature.material]?.name || "plate"}${feature.process ? ` · ${PROCESSES[feature.process]}` : ""}`);
+    // Above, clear of dimensions and the centre line; a part drawn on another part labels just above itself,
+    // inside the part under it, so the two parts' labels never sit on top of each other
+    return feature.feature === "extrude" && feature.on
+      ? { type: "text", x: b.minX, y: b.minY - 20, text: text + edge, fontSize: 12, strokeColor: BLUE }
+      : { type: "text", x: b.minX, y: b.minY - 72, text: text + edge, fontSize: 14, strokeColor: BLUE };
   });
   const labelEls = convertToExcalidrawElements(labels).map((e, i) => ({
     ...e, groupIds: [groups.get(plan.outers[i].el.id)], customData: { note: "label", of: plan.outers[i].el.id },
   }));
   const marked = el => {
     if (outerFeature.has(el.id)) {
-      return bump({ ...el, groupIds: [groups.get(el.id)], backgroundColor: FILLS[feature.feature] || PART_FILL, fillStyle: "solid",
+      return bump({ ...el, groupIds: [groups.get(el.id)], backgroundColor: FILLS[feature.feature] || MATERIALS[feature.material]?.tint || PART_FILL, fillStyle: "solid",
         customData: { ...(el.customData || {}), part: outerFeature.get(el.id) } });
     }
     // A hole keeps its Hole-tool spec and its own group inside the part's group.
@@ -588,18 +601,26 @@ const FASTENERS = {
   M12: { clear: 13.5, tap: 10.2, pitch: 1.75, cb: 20, cbDepth: 13, csk: 27.2 },
 };
 
-// Materials a part can be made from: density (g/cm³) for its weight, family for the shop's rules,
-// and the plate or sheet thicknesses suppliers stock (mm), offered as one-tap depths.
+// Materials a part can be made from: density (g/cm³) for its weight, family for the shop's rules, the plate or
+// sheet thicknesses suppliers stock (mm), offered as one-tap depths, and how it looks: tint fills the part on the
+// canvas, color (0-1 RGB) and transparency (%) colour the 3D part on the laptop and in the downloaded files.
 const MATERIALS = {
-  al6061: { name: "Aluminium 6061", density: 2.7, family: "aluminium", stock: [1.5, 2, 3, 4, 5, 6, 8, 10, 12] },
-  steel: { name: "Mild steel", density: 7.85, family: "steel", stock: [1, 1.5, 2, 3, 4, 5, 6, 8, 10] },
-  ss304: { name: "Stainless 304", density: 8, family: "stainless", stock: [1, 1.5, 2, 3, 4, 5, 6] },
-  acrylic: { name: "Acrylic", density: 1.19, family: "acrylic", stock: [2, 3, 4, 5, 6, 8, 10] },
-  plywood: { name: "Birch plywood", density: 0.68, family: "wood", stock: [3, 4, 6, 9, 12, 18] },
-  pla: { name: "PLA (3D print)", density: 1.24, family: "plastic", stock: [] },
+  al6061: { name: "Aluminium 6061", density: 2.7, family: "aluminium", stock: [1.5, 2, 3, 4, 5, 6, 8, 10, 12],
+    tint: "#E2E7EE", color: [0.8, 0.82, 0.85], transparency: 0 },
+  steel: { name: "Mild steel", density: 7.85, family: "steel", stock: [1, 1.5, 2, 3, 4, 5, 6, 8, 10],
+    tint: "#D3D9E1", color: [0.5, 0.53, 0.57], transparency: 0 },
+  ss304: { name: "Stainless 304", density: 8, family: "stainless", stock: [1, 1.5, 2, 3, 4, 5, 6],
+    tint: "#E5E8EC", color: [0.7, 0.72, 0.75], transparency: 0 },
+  acrylic: { name: "Acrylic", density: 1.19, family: "acrylic", stock: [2, 3, 4, 5, 6, 8, 10],
+    tint: "#DCF0F8", color: [0.68, 0.87, 0.96], transparency: 55 },
+  plywood: { name: "Birch plywood", density: 0.68, family: "wood", stock: [3, 4, 6, 9, 12, 18],
+    tint: "#F2E4CE", color: [0.86, 0.72, 0.52], transparency: 0 },
+  pla: { name: "PLA (3D print)", density: 1.24, family: "plastic", stock: [],
+    tint: "#FCE4D4", color: [0.95, 0.52, 0.2], transparency: 0 },
 };
 const PROCESSES = { cnc: "CNC mill", laser: "Laser / waterjet", sheet: "Sheet metal", print: "3D print" };
-const materialOf = key => MATERIALS[key] && (({ name, density, family }) => ({ name, density, family }))(MATERIALS[key]);
+const materialOf = key => MATERIALS[key]
+  && (({ name, density, family, color, transparency }) => ({ name, density, family, color, transparency }))(MATERIALS[key]);
 
 // A spur gear's outline in mm round (0, 0): involute flanks at a 20° pressure angle, addendum m and
 // dedendum 1.25 m (ISO 53). The root between teeth is a straight chord, fine for cut and printed gears.
@@ -643,6 +664,8 @@ function holeProblem(box, depth, spec) {
   if (spec.kind === "tapped" && spec.depth && depth && spec.depth >= depth) return `Deeper than the part (${fmt(depth)} mm). Leave thread depth empty for through`;
   if (!(spec.diameter > 0)) return "Enter a diameter above 0 mm";
   if (!Number.isFinite(spec.x) || !Number.isFinite(spec.y)) return "Enter where the hole goes";
+  if (spec.fastener && spec.kind === "counterbore" && depth && spec.cbDepth >= depth)
+    return `An ${spec.fastener} counterbore is ${fmt(spec.cbDepth)} mm deep, more than this ${fmt(depth)} mm part. Use C'sink, or a thicker part`;
   if (spec.kind === "blind" && !(spec.depth > 0)) return "Enter a depth above 0 mm";
   if (spec.kind === "blind" && depth && spec.depth >= depth) return `Deeper than the part (${fmt(depth)} mm). Choose Through`;
   if (spec.kind === "counterbore" && !(spec.cbDiameter > spec.diameter)) return "The counterbore must be wider than the hole";
@@ -901,7 +924,8 @@ function partSketch(elements) {
     if (part.feature === "boss") return { id: el.id, type: "boss", on: part.on, height: part.heightMm, profile: shape(el), holes, ...edge };
     if (part.feature === "pocket") return { id: el.id, type: "pocket", on: part.on, depth: part.depthMm, profile: shape(el), holes };
     const bends = bendsOf(el);
-    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes, ...edge, ...madeOf(part), ...(bends.length ? { bends } : {}) };
+    const placed = part.on && byId.has(part.on) ? { on: part.on, place: part.place || "top" } : {};   // a part of its own, on or in another
+    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes, ...edge, ...madeOf(part), ...placed, ...(bends.length ? { bends } : {}) };
   });
 
   const used = new Set([...profiles.map(el => el.id), ...els.filter(el => profiles.some(p => p.id === holeOf(el)?.of)).map(el => el.id)]);
@@ -917,6 +941,13 @@ function partSketch(elements) {
     notes: els.filter(el => el.type === "text" && !isNote(el)).map(el => ({ text: el.text, at: P({ x: el.x, y: el.y }) })),
   };
 }
+
+// What the laptop's part is made of, in words: one material, or each part's.
+const madeOf = made => {
+  const names = [...new Set((made.bodies || []).map(b => b.material?.name).filter(Boolean))];
+  const parts = made.bodies?.length > 1 ? `${made.bodies.length} parts: ` : "";
+  return names.length ? parts + names.join(", ") : made.material?.name || "No material set";
+};
 
 // ---- Tools. Each one reports what it did, or why it could not run. ----
 
@@ -1016,17 +1047,28 @@ function writeBend(api, line, bend) {
 function noteOwner(el, dimGroups) {
   return el.customData?.dim?.target || el.customData?.of || (el.customData?.note === "dim" ? dimGroups.get(el.groupIds[0]) : null);
 }
-const shapeKey = el => JSON.stringify([el.width, el.height, el.angle, el.points]);
+// Moving a shape changes only x and y; reshaping it changes its size, turn or points.
+const shapeKey = el => `${el.width}|${el.height}|${el.angle}|${el.points ? el.points.length + "|" + el.points[el.points.length - 1] : ""}`;
 
 function followNotes(api, elements, seen) {
+  // Fast path, run on every change: anything whose version is unchanged is skipped without a look.
+  let changed = false;
+  for (const el of elements) {
+    const was = seen.get(el.id);
+    if (!was || was.v !== el.version) { changed = true; break; }
+  }
+  if (!changed && seen.size === elements.length) return;
   const els = elements.filter(e => !e.isDeleted);
   const dimGroups = new Map(els.filter(e => e.customData?.dim).map(e => [e.groupIds[0], e.customData.dim.target]));
   const byId = new Map(els.map(e => [e.id, e]));
+  // Only shapes that have notes or holes matter; a plain stroke being drawn is left alone.
+  const owners = new Set(els.map(e => isNote(e) ? noteOwner(e, dimGroups) : holeOf(e)?.of).filter(Boolean));
+  const dimmed = new Set(els.filter(e => e.customData?.dim).map(e => e.customData.dim.target));
   const moves = new Map(), redraw = new Set();
   for (const el of els) {
     const was = seen.get(el.id);
-    if (!was || isNote(el)) continue;
-    if (was.key !== shapeKey(el)) redraw.add(el.id);
+    if (!was || was.v === el.version || isNote(el) || !owners.has(el.id)) continue;
+    if (was.key !== shapeKey(el)) { if (dimmed.has(el.id)) redraw.add(el.id); }
     else if (was.x !== el.x || was.y !== el.y) moves.set(el.id, { dx: el.x - was.x, dy: el.y - was.y });
   }
   // A hole follows its profile, and a hole's notes follow the hole, so a delta is found up that chain.
@@ -1053,7 +1095,7 @@ function followNotes(api, elements, seen) {
     api.updateScene({ elements: out, captureUpdate: CaptureUpdateAction.EVENTUALLY });   // part of the same undo step as the move
   }
   seen.clear();
-  for (const el of next || elements) if (!el.isDeleted) seen.set(el.id, { x: el.x, y: el.y, key: shapeKey(el) });
+  for (const el of next || elements) seen.set(el.id, { v: el.version, x: el.x, y: el.y, key: shapeKey(el) });
 }
 
 function writeCorners(api, el, corners) {
@@ -1157,6 +1199,7 @@ function App() {
   const seenStrokes = useRef(new Set());   // freedraw ids already seen in onChange
   const activeStroke = useRef(null);       // the freedraw stroke being drawn now
   const holdPending = useRef(null);        // "held" when a pen lifts after being still, "lift" otherwise
+  const strokeBy = useRef("pen");          // what drew the last stroke: pen, mouse or touch
   const pressAt = useRef(null);            // where and when the current pen press went still
 
   // Every tool reports through here. kind is "ok" or "warn" (the tool could not run).
@@ -1205,7 +1248,7 @@ function App() {
     const mode = was?.feature && (base || !["boss", "pocket"].includes(was.feature)) ? was.feature : base ? "boss" : plan.axis ? "revolve" : "extrude";
     const material = was?.material || lastPart.current.material;
     const bends = live(api).some(b => bendOf(b) && crosses(b, pts));
-    setDialog({ type: "part", plan, base, mode, depth: fmt(was?.depthMm ?? was?.heightMm ?? (base ? 5 : 10)), angle: fmt(was?.angleDeg ?? 360),
+    setDialog({ type: "part", plan, base, mode, place: was?.place || "top", depth: fmt(was?.depthMm ?? was?.heightMm ?? (base ? 5 : 10)), angle: fmt(was?.angleDeg ?? 360),
       edgeKind: was?.topEdge?.kind || "none", edgeSize: fmt(was?.topEdge?.size ?? 1),
       material, process: was?.process || (bends ? "sheet" : lastPart.current.process) || defaultProcess(material, bends) });
   };
@@ -1412,6 +1455,7 @@ function App() {
       }
       if (api.getAppState().activeTool.type !== "freedraw") { pressAt.current = null; return; }
       pressAt.current = { id: e.pointerId, x: e.clientX, y: e.clientY, still: performance.now() };
+      strokeBy.current = e.pointerType || "mouse";
     };
     const move = e => {
       if (fingers.has(e.pointerId)) {
@@ -1451,7 +1495,7 @@ function App() {
 
   // Every board change: remember the newest pen stroke, and snap it if it was held still.
   const handleChange = (elements, appState) => {
-    if (api) followNotes(api, elements, seen.current);
+    if (api && !appState.newElement && !appState.multiElement) followNotes(api, elements, seen.current);   // not mid-stroke
     bridgeRef.current?.changed(elements);
     setGridOn(!!appState.gridModeEnabled);
     setEmpty(!elements.some(e => !e.isDeleted));
@@ -1463,7 +1507,7 @@ function App() {
       const held = holdPending.current === "held";
       holdPending.current = null;
       const el = elements.find(e => e.id === activeStroke.current && e.type === "freedraw" && !e.isDeleted);
-      if (el && (held || autoSnap)) snapStroke(api, el, flash, held);
+      if (el && (held || autoSnap)) snapStroke(api, el, flash, held, strokeBy.current);
     }
     // A line just finished: tidy it, and if Centre line was waiting, make it the centre line.
     if (api && !appState.multiElement && !appState.newElement && !appState.editingLinearElement) {
@@ -1511,7 +1555,8 @@ function App() {
       if (mode !== "extrude" && !dialog.base) return flash("Draw it inside a part to stack it on top", "warn");
       const feature = mode === "boss" ? { feature: "boss", heightMm: d, on: dialog.base.id }
         : mode === "pocket" ? { feature: "pocket", depthMm: d, on: dialog.base.id }
-        : { feature: "extrude", depthMm: d, material: dialog.material, process: dialog.process };
+        : { feature: "extrude", depthMm: d, material: dialog.material, process: dialog.process,
+            ...(dialog.base ? { on: dialog.base.id, place: dialog.place } : {}) };
       if (mode === "extrude") lastPart.current = { material: dialog.material, process: dialog.process };
       applyPart(api, plan, edge ? { ...feature, topEdge: edge } : feature, flash);
     } else {
@@ -1740,18 +1785,22 @@ function App() {
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Squares }} /><span>3D file</span>
           </button>
         </div>
+        {/* The laptop's side, on one line: whether it has the drawing, and what the part weighs.
+            Shop checks fold into one row that opens the list. */}
         <div className="eng-send">
-          <p className={"eng-link " + link.state} role="status" aria-live="polite">{link.text}</p>
-          {made?.status === "ok" && !made.preview && (
-            <p className="eng-made">{made.material ? `${made.material.name} · ${fmt(made.mass)} g` : `${fmt(made.volume / 1000)} cm³ · no material set`}</p>
-          )}
+          <div className="eng-status">
+            <p className={"eng-link " + link.state} role="status" aria-live="polite" title={link.text}><span>{link.text}</span></p>
+            {made?.status === "ok" && !made.preview && (
+              <span className="eng-mass" title={madeOf(made)}>{made.mass != null ? `${fmt(made.mass)} g` : `${fmt(made.volume / 1000)} cm³`}</span>
+            )}
+          </div>
           {made?.checks?.length > 0 && (
-            <ul className="eng-checks" aria-label="Manufacturing checks">
-              {made.checks.slice(0, 4).map((c, i) => (
-                <li key={i}><button type="button" className={c.level} onClick={() => showCheck(c)}>{c.message}</button></li>
-              ))}
-              {made.checks.length > 4 && <li className="more">+{made.checks.length - 4} more</li>}
-            </ul>
+            <button type="button" className={"eng-checkrow " + (made.checks.some(c => c.level === "warn") ? "warn" : "note")}
+              onClick={() => made.checks.length === 1 ? showCheck(made.checks[0]) : setDialog({ type: "checks" })}
+              title={made.checks.length === 1 ? made.checks[0].message : undefined}>
+              <span>{made.checks.length === 1 ? "1 shop check" : `${made.checks.length} shop checks`}</span>
+              <span className="chev" aria-hidden="true">›</span>
+            </button>
           )}
         </div>
       </aside>
@@ -1766,8 +1815,11 @@ function App() {
       {dialog?.type === "part" && (
         <Dialog onClose={close} label="Profile" onSubmit={confirmPart}
           actions={<><button type="button" onClick={close}>Cancel</button><button type="submit" className="primary">Mark</button></>}>
-          <Seg label="Feature" options={dialog.base ? { boss: "Boss", pocket: "Pocket", extrude: "Extrude", revolve: "Revolve" } : { extrude: "Extrude", revolve: "Revolve" }}
+          <Seg label="Feature" options={dialog.base ? { boss: "Boss", pocket: "Pocket", extrude: "New part", revolve: "Revolve" } : { extrude: "Extrude", revolve: "Revolve" }}
             value={dialog.mode} onChange={m => setDialog(d => ({ ...d, mode: m }))} />
+          {dialog.mode === "extrude" && dialog.base && (
+            <Seg label="Placed" options={{ top: "On top", inside: "Set inside" }} value={dialog.place} onChange={v => setDialog(d => ({ ...d, place: v }))} />
+          )}
           {["extrude", "revolve"].includes(dialog.mode) && (
             <div className="eng-row">
               <Pick label="Material" value={dialog.material} options={Object.fromEntries(Object.entries(MATERIALS).map(([k, m]) => [k, m.name]))}
@@ -1795,6 +1847,9 @@ function App() {
               : dialog.mode === "revolve" && dialog.plan.crossesAxis ? "The profile crosses the centre line. Keep it on one side."
               : dialog.mode === "boss" ? "Stands on top of the part it is drawn on" + (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} through all` : "")
               : dialog.mode === "pocket" ? "Cut down into the part it is drawn on" + (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} through all` : "")
+              : dialog.mode === "extrude" && dialog.base ? (dialog.place === "inside"
+                ? "A separate part set into the one it is drawn on, which is cut to fit and shows see-through in 3D"
+                : "A separate part in its own material, layered on top of the one it is drawn on")
               : `${dialog.plan.outers.length > 1 ? dialog.plan.outers.length + " profiles" : "1 profile"}` +
                 (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} cut through` : ", no holes")}
           </p>
@@ -1867,6 +1922,17 @@ function App() {
         </Dialog>
       )}
 
+      {dialog?.type === "checks" && made?.checks && (
+        <Dialog onClose={close} label="Checks" onSubmit={close} actions={<button type="submit" className="primary">Done</button>}>
+          <ul className="eng-checks wide" aria-label="Manufacturing checks">
+            {made.checks.map((c, i) => (
+              <li key={i}><button type="button" className={c.level} onClick={() => { setDialog(null); showCheck(c); }}>{c.message}</button></li>
+            ))}
+          </ul>
+          {note("Tap a check to see the shape it is about")}
+        </Dialog>
+      )}
+
       {dialog?.type === "bend" && (
         <Dialog onClose={close} label="Bend" onSubmit={() => confirmBend(false)}
           actions={<>
@@ -1924,7 +1990,9 @@ function App() {
           {toast.sticky && <button type="button" onClick={() => setPick(null)}>Cancel</button>}
         </div>
       ) : empty && !dialog && (
-        <div className="eng-hint">Draw the part's outline with the Pencil. Lines, arcs, circles and rectangles straighten as you lift, and sides that meet join up. Hold still at the end for any straight-sided outline.</div>
+        <div className="eng-hint">{MOUSE
+          ? "Draw the part's outline with the pen tool and the mouse or trackpad. Lines, arcs, circles, rectangles and outlines whose ends meet straighten when you let go, and sides that meet join up."
+          : "Draw the part's outline with the Pencil. Lines, arcs, circles and rectangles straighten as you lift, and sides that meet join up. Hold still at the end for any straight-sided outline."}</div>
       )}
     </div>
   );

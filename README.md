@@ -23,8 +23,11 @@ A pulsing border runs round the 3D view while a drawing change is being turned i
 
 - Install once, with FreeCAD closed: `sh freecad/install.sh`. It links the workbench into FreeCAD and sets
   FreeCAD's preferences for a light, fast screen (no anti-aliasing, navigation cube, autosave or splash).
-- Run, with the server up: `sh freecad/start.sh`. Only the modules BoardSketch needs are loaded; every other
-  bundled workbench is skipped with `--disable-addon`.
+  Run it again if FreeCAD ever opens with its toolbars or panels missing: it clears the saved layout so
+  FreeCAD starts with its own defaults.
+- Run, with the server up: `sh freecad/start.sh`. Every FreeCAD workbench stays available; Focus in the
+  BoardSketch toolbar hides or shows FreeCAD's own toolbars and panels. `sh freecad/start.sh lite` loads
+  only the modules BoardSketch needs, for a slow machine.
 
 ## Open items
 
@@ -64,6 +67,11 @@ A `model` event looks like:
 
 - `status`: `ok`; `empty` (nothing closed on the iPad: **remove the part**, so the view matches the canvas); or `error` (see `warnings`: keep the last good part).
 - `preview`: true while nothing is marked as a part yet.
+- `bodies`: one entry per part, in the order of the solids in the model file (a compound when there are several):
+  `{id, material, process, volume, mass, seeThrough, finish: {metallic, roughness}}`. Every extrude or revolve is a part
+  of its own; one drawn on another part is layered on its top or set into it ("New part" in the Profile dialog).
+  Where parts overlap, the smaller is cut out of the bigger, which is `seeThrough` so the part inside shows.
+  `mass` is the sum of the parts' masses, each in its own material; FreeCAD and the GLB use `finish` so metals shine.
 - `sketch`: the drawing's loose lines and shapes in mm, not yet part of the solid. Draw them on the sketch plane (z = 0). `role` is `sketch`, `hole` or `centre line`.
 - Only the BREP is written on every rebuild (2 ms, and the fastest for FreeCAD to load). The other formats are made when first asked for.
 - Units are mm. The sketch is the XY plane seen from +Z, and extrudes rise along +Z. The GLB is already turned Y-up for three.js; the other formats stay Z-up.

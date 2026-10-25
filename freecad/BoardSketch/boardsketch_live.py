@@ -28,7 +28,13 @@ REFIT = 0.2                # re-fit the camera when the part's size changes by m
 PART_COLOR = (0.62, 0.69, 0.78)     # light steel on the dark background
 EDGE_COLOR = (0.04, 0.06, 0.09)
 PREVIEW_TRANSPARENCY = 55           # an outline not yet marked as a profile shows see-through
+SEE_THROUGH = 60                    # a part with another part set inside it shows see-through
 SKETCH_COLOR = (0.13, 0.83, 0.93)   # loose iPad lines, in the BoardSketch accent
+
+
+def part_objects(doc):
+    """The part's objects: "Part", and "Part_2", "Part_3", ... when it is made of several parts."""
+    return [o for o in doc.Objects if o.Name == "Part" or o.Name.startswith("Part_")]
 
 
 def document():
@@ -185,8 +191,10 @@ class Live(QtCore.QObject):
 
     def clear_part(self):
         doc = document()
-        if doc.getObject("Part"):
-            doc.removeObject("Part")
+        gone = part_objects(doc)
+        for o in gone:
+            doc.removeObject(o.Name)
+        if gone:
             doc.recompute()
         self.shown = None
 
@@ -223,13 +231,25 @@ class Live(QtCore.QObject):
             self.card.show_state("offline", "Could not open the model", str(e))
             return
         doc = document()
-        obj = doc.getObject("Part") or doc.addObject("Part::Feature", "Part")
+        # Several parts (layered, or one set into another) come as a compound, one child per part,
+        # in the order of info["bodies"]; each is its own object, in its own material
+        bodies = info.get("bodies") or [{}]
+        shapes = shape.childShapes() if len(bodies) > 1 and shape.ShapeType == "Compound" else [shape]
+        names = ["Part"] + [f"Part_{i + 1}" for i in range(1, len(shapes))]
+        for o in part_objects(doc):
+            if o.Name not in names:
+                doc.removeObject(o.Name)
+        objs = [doc.getObject(n) or doc.addObject("Part::Feature", n) for n in names]
         before = self.shown
         new_session = info["session"] != self.session
-        obj.Label = "Preview" if info.get("preview") else "Part"
-        obj.Shape = shape
+        for i, (obj, part, body) in enumerate(zip(objs, shapes, bodies + [{}] * len(shapes))):
+            name = (body.get("material") or {}).get("name")
+            obj.Label = "Preview" if info.get("preview") else name if len(objs) > 1 and name else f"Part {i + 1}" if i else "Part"
+            obj.Shape = part
         doc.recompute()
-        style(obj, info.get("preview"))
+        for obj, body in zip(objs, bodies + [{}] * len(objs)):
+            style(obj, info.get("preview"), body.get("material") or (info.get("material") if len(objs) == 1 else None), body)
+        obj = objs
         view = Gui.getDocument(doc.Name).activeView()
 
         # The camera and the build-up animation follow big changes only, not every stroke.
@@ -255,6 +275,9 @@ class Live(QtCore.QObject):
         size = " × ".join(f"{b - a:.1f}" for a, b in zip(lo, hi)) + " mm"
         n = info.get("features", 0)
         detail = f"{size} · {info.get('volume', 0) / 1000:.2f} cm³ · {n} feature{'s' if n != 1 else ''}"
+        parts = len(info.get("bodies") or [])
+        if parts > 1:
+            detail += f" · {parts} parts"
         if self.last_build:
             detail += f" · AI has {self.last_build}"
         if info.get("warnings"):
@@ -263,23 +286,56 @@ class Live(QtCore.QObject):
         self.card.show_state("live", title, detail)
 
 
-def style(obj, preview=False):
+def style(obj, preview=False, material=None, body=None):
     vo = obj.ViewObject
-    vo.ShapeColor = PART_COLOR
+    body = body or {}
+    # The material picked on the iPad colours the part (and acrylic shows see-through); otherwise light steel.
+    # Metals shine: the finish the builder gives each part (metallic, roughness) sets its highlight.
+    color = tuple(material["color"]) if material and material.get("color") else PART_COLOR
+    look = body.get("finish") or {"metallic": 1, "roughness": 0.35}
+    shine(vo, color, look["metallic"], look["roughness"])
     vo.LineColor = EDGE_COLOR
     vo.LineWidth = 1.5
     vo.DisplayMode = "Flat Lines"
-    vo.Transparency = PREVIEW_TRANSPARENCY if preview else 0
+    vo.Transparency = PREVIEW_TRANSPARENCY if preview else SEE_THROUGH if body.get("seeThrough") \
+        else int((material or {}).get("transparency") or 0)
+
+
+def shine(vo, color, metallic, roughness):
+    """A metal reflects the light in its own colour, with a bright, tight highlight that grows with polish
+    (a machined face more than a cut one); other materials keep a soft, dim one."""
+    gloss = 1 - roughness
+    if metallic:
+        diffuse = tuple(c * (0.55 + 0.3 * roughness) for c in color)
+        specular = tuple(min(1.0, gloss * (0.55 + 0.45 * c)) for c in color)
+        shininess = 0.35 + 0.6 * gloss
+    else:
+        diffuse, specular, shininess = color, (0.25 * gloss,) * 3, 0.1 + 0.5 * gloss
+    try:
+        mat = App.Material(DiffuseColor=diffuse, AmbientColor=tuple(c * 0.35 for c in color), SpecularColor=specular,
+                           EmissiveColor=(0.0, 0.0, 0.0), Shininess=shininess, Transparency=0.0)
+        if hasattr(vo, "ShapeAppearance"):      # FreeCAD 1.0 and later
+            vo.ShapeAppearance = [mat]
+        else:                                   # FreeCAD 0.21
+            vo.ShapeMaterial = mat
+    except Exception as e:                      # never lose the part over its look: fall back to plain colour
+        App.Console.PrintWarning(f"BoardSketch: material look not set ({e}), using plain colour\n")
+        vo.ShapeColor = color
 
 
 def build_up(obj, ms, done=None):
-    """Reveals the part from the bottom up with a moving clipping plane, like it is being made layer by layer."""
+    """Reveals the part from the bottom up with a moving clipping plane, like it is being made layer by layer.
+    obj may be a list: a part made of several, revealed together."""
     from pivy import coin
 
-    box = obj.Shape.BoundBox
-    root = obj.ViewObject.RootNode
+    objs = obj if isinstance(obj, list) else [obj]
+    box = objs[0].Shape.BoundBox
+    for o in objs[1:]:
+        box.add(o.Shape.BoundBox)
+    roots = [o.ViewObject.RootNode for o in objs]
     clip = coin.SoClipPlane()
-    root.insertChild(clip, 0)
+    for root in roots:
+        root.insertChild(clip, 0)
     start = time.time()
     timer = QtCore.QTimer()
 
@@ -291,10 +347,14 @@ def build_up(obj, ms, done=None):
         clip.plane.setValue(coin.SbPlane(coin.SbVec3f(0, 0, -1), -z))
         if t >= 1.0:
             timer.stop()
-            if root.findChild(clip) >= 0:
-                root.removeChild(clip)
+            unclip()
             if done:
                 done()
+
+    def unclip():
+        for root in roots:
+            if root.findChild(clip) >= 0:
+                root.removeChild(clip)
 
     previous = getattr(build_up, "running", None)
     if previous:
@@ -305,8 +365,7 @@ def build_up(obj, ms, done=None):
 
     def finish():
         timer.stop()
-        if root.findChild(clip) >= 0:
-            root.removeChild(clip)
+        unclip()
     build_up.running = finish
     build_up.timer = timer      # keeps the timer alive until it finishes
 
