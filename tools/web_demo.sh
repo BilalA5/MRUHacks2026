@@ -32,7 +32,7 @@ done
 echo "Tunnel to the laptop: $URL"
 
 # The first run creates the Vercel project from the folder name, which must be lowercase; link it once instead:
-#   vercel project add boardsketch && vercel link --yes --project boardsketch
+#   vercel project add bevel && vercel link --yes --project bevel
 SITE=$(vercel deploy --prod --yes ${VERCEL_TOKEN:+--token "$VERCEL_TOKEN"} --build-env API_BASE="$URL" | grep -oE 'https://[^ ]+\.vercel\.app' | tail -1)
 [ -n "$SITE" ] || { echo "The deploy failed (see above)."; exit 1; }
 echo
