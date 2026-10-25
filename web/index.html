@@ -78,8 +78,8 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-toast button:active{transform:scale(.97)}
 /* First-run hint while the sheet is empty */
 .eng-hint{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:5;max-width:min(460px,calc(100vw - 32px));color:#7b8794;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none}
-/* 3D preview: the laptop's model of the drawing, in a dark CAD-style panel at the bottom right */
-.eng-3d{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:20;width:min(46vw,640px);height:min(52vh,520px);display:flex;flex-direction:column;overflow:hidden;background:#0B0F17;border:1px solid #1F2937;border-radius:14px;box-shadow:0 18px 48px #0b0f1740;touch-action:none;animation:eng-rise 200ms cubic-bezier(.23,1,.32,1)}
+/* 3D preview: the laptop's model of the drawing, in a dark CAD-style panel at the top right, clear of the toasts and hints */
+.eng-3d{position:fixed;right:16px;top:calc(72px + env(safe-area-inset-top,0px));z-index:20;width:min(46vw,640px);height:min(52vh,520px);display:flex;flex-direction:column;overflow:hidden;background:#0B0F17;border:1px solid #1F2937;border-radius:14px;box-shadow:0 18px 48px #0b0f1740;touch-action:none;animation:eng-rise 200ms cubic-bezier(.23,1,.32,1)}
 .eng-3d header{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 6px 0 14px;background:#111723;border-bottom:1px solid #1F2937;color:#E5EAF0;font:500 12px -apple-system,BlinkMacSystemFont,sans-serif}
 .eng-3d header strong{font-weight:700;color:#35C4E8;letter-spacing:.06em}
 .eng-3d header span{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#8B98A9;font-variant-numeric:tabular-nums}
@@ -87,7 +87,7 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-3d header button:active{background:#1F2937}
 .eng-3d-view{flex:1;min-height:0}
 .eng-3d-view canvas{display:block;width:100%;height:100%}
-@media (max-width:760px){.eng-3d{left:16px;right:16px;width:auto;height:42vh}}
+@media (max-width:760px){.eng-3d{left:16px;right:16px;top:auto;bottom:calc(16px + env(safe-area-inset-bottom,0px));width:auto;height:42vh}}
 @keyframes eng-toast-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 @keyframes eng-toast-out{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,4px)}}
 @keyframes eng-toast-fade{to{opacity:0}}
