@@ -7,6 +7,10 @@
 # The stream sends a new snapshot several times a second, so building runs in one background
 # worker that always takes the newest snapshot and skips any that went stale while it was busy.
 # Each feature's solid is cached, so drawing on one feature does not rebuild the others.
+#
+# Features: extrude and revolve stand on the sketch plane. A boss stands on the top of the profile it
+# was drawn on (`on`), and a pocket is cut down into it. Holes in an extrude or revolve cut that
+# feature only; holes in a boss or pocket go down through everything under them.
 import json
 import math
 import threading
@@ -97,6 +101,26 @@ def face(shape):
     f = cq.Face.makeFromWires(wire)
     if not f.isValid():
         f = f.fix()
+    return round_corners(f, shape) if shape.get("corners") else f
+
+
+# The canvas's Round tool: corners rounded (fillet) or cut off (chamfer), each found by where it is.
+# A size too big for a corner's sides is cut down to the most they take, so a slot's or a link's ends
+# can be typed as half the width and come out a full half circle.
+def round_corners(f, shape):
+    pts = outline_points(shape)
+    n = len(pts)
+    nearest = lambda at: min(range(n), key=lambda i: math.dist(pts[i], at))
+    marked = {nearest(c["at"]): c for c in shape["corners"] if math.dist(pts[nearest(c["at"])], c["at"]) < 0.5}
+    for i, c in marked.items():
+        a, b = pts[(i - 1) % n], pts[(i + 1) % n]
+        # Each side gives a rounded corner at most its length, or half when the corner at its other end is rounded too
+        side = min(math.dist(pts[i], q) / (2 if j in marked else 1) for q, j in ((a, (i - 1) % n), (b, (i + 1) % n)))
+        u, v = (a[0] - pts[i][0], a[1] - pts[i][1]), (b[0] - pts[i][0], b[1] - pts[i][1])
+        angle = math.acos(max(-1, min(1, (u[0] * v[0] + u[1] * v[1]) / (math.hypot(*u) * math.hypot(*v)))))
+        size = min(c["size"], 0.999 * side * (math.tan(angle / 2) if c["kind"] == "fillet" else 1))
+        vertex = min(f.Vertices(), key=lambda vx: math.dist((vx.X, vx.Y), pts[i]))
+        f = f.fillet2D(size, [vertex]) if c["kind"] == "fillet" else f.chamfer2D(size, [vertex])
     return f
 
 
@@ -132,9 +156,27 @@ def hole_tool(h, depth):
     return tool
 
 
-def extrude(profile, holes, depth):
-    solid = prism(face(profile), 0, depth)
-    tools = [hole_tool(h, depth) if h["type"] == "hole" else prism(face(h), -EXTRA, depth + EXTRA) for h in holes]
+# The tools that cut a feature's holes, drilled down from its top at height z
+def hole_tools(holes, z):
+    return [hole_tool(h, z) if h["type"] == "hole" else prism(face(h), -EXTRA, z + EXTRA) for h in holes]
+
+
+# The Profile dialog's Top edges: the edges round the top face at height z rounded or chamfered
+def round_top(solid, edge, z, notes):
+    if not edge or edge.get("kind") not in ("fillet", "chamfer"):
+        return solid
+    edges = [e for e in solid.Edges() if all(abs(v.Z - z) < 1e-6 for v in e.Vertices())]
+    try:
+        return solid.fillet(edge["size"], edges) if edge["kind"] == "fillet" else solid.chamfer(edge["size"], None, edges)
+    except Exception:
+        notes.append(f"top edges left sharp: {edge['size']} mm is too big for this part")
+        return solid
+
+
+def extrude(feature, notes):
+    depth = feature["depth"]
+    solid = round_top(prism(face(feature["profile"]), 0, depth), feature.get("edge"), depth, notes)
+    tools = hole_tools(feature["holes"], depth)
     return solid.cut(*tools) if tools else solid
 
 
@@ -164,15 +206,40 @@ def bolt_holes(feature, bolts, a, b):
     return [first.rotate(a, b, 360 * k / bolts["count"]) for k in range(bolts["count"])]
 
 
-def build_feature(feature):
-    key = json.dumps(feature, sort_keys=True)
+# Height of a feature's top face: where a boss or pocket drawn on it starts, and where its holes start.
+# A pocket's top is its floor.
+def top(feature, by_id, seen=()):
+    kind = feature["type"]
+    if kind == "extrude":
+        return feature["depth"]
+    if kind in ("boss", "pocket"):
+        base = by_id.get(feature.get("on"))
+        if not base or feature.get("on") in seen or base["type"] not in ("extrude", "boss"):
+            raise ValueError("the part it was drawn on is gone, or is not a flat extrude or boss")
+        z = top(base, by_id, seen + (feature["on"],))
+        return z + feature["height"] if kind == "boss" else z - feature["depth"]
+    raise ValueError("a revolved part has no flat top")
+
+
+def build_feature(feature, by_id):
+    """-> cache key, (solid to add or None, tools to cut from the whole part, notes)"""
+    z = top(feature, by_id) if feature["type"] in ("boss", "pocket") else None
+    base_top = top(by_id[feature["on"]], by_id) if z is not None else None
+    key = json.dumps([feature, base_top], sort_keys=True)   # a boss moves when the part under it changes
     if key not in feature_cache:
+        notes = []
         if feature["type"] == "revolve":
             if not feature.get("axis"):
                 raise ValueError("its centre line was deleted")
-            feature_cache[key] = revolve(feature)
+            made = revolve(feature), []
+        elif feature["type"] == "extrude":
+            made = extrude(feature, notes), []
+        elif feature["type"] == "boss":
+            boss = round_top(prism(face(feature["profile"]), base_top, z), feature.get("edge"), z, notes)
+            made = boss, hole_tools(feature["holes"], z)
         else:
-            feature_cache[key] = extrude(feature["profile"], feature["holes"], feature["depth"])
+            made = None, [prism(face(feature["profile"]), z, base_top + EXTRA), *hole_tools(feature["holes"], z)]
+        feature_cache[key] = (*made, notes)
     return key, feature_cache[key]
 
 
@@ -200,13 +267,17 @@ def build(part):
     features, preview = part.get("features", []), False
     if not features:
         features, preview = preview_features(part), True
-    solids, used = [], set()
+    solids, tools, used, built = [], [], set(), 0
+    by_id = {f.get("id"): f for f in features}
     with build_lock:
         for i, feature in enumerate(features):
             try:
-                key, solid = build_feature(feature)
-                solids.append(solid)
+                key, (solid, cuts, notes) = build_feature(feature, by_id)
+                solids += [solid] if solid else []
+                tools += cuts
+                warnings += [f"feature {i + 1} ({feature['type']}): {n}" for n in notes]
                 used.add(key)
+                built += 1
             except Exception as e:
                 warnings.append(f"feature {i + 1} ({feature['type']} of a {feature['profile']['type']}) was skipped: {e}")
         for key in set(feature_cache) - used:
@@ -214,9 +285,10 @@ def build(part):
         if not solids:
             status = "error" if features else "empty"
             return None, {"status": status, "preview": preview, "features": 0, "warnings": warnings}
-        solid = solids[0].fuse(*solids[1:]).clean() if len(solids) > 1 else solids[0]
+        solid = solids[0].fuse(*solids[1:]) if len(solids) > 1 else solids[0]
+        solid = (solid.cut(*tools) if tools else solid).clean()
         bb = solid.BoundingBox()
-    return solid, {"status": "ok", "preview": preview, "features": len(solids), "warnings": warnings,
+    return solid, {"status": "ok", "preview": preview, "features": built, "warnings": warnings,
                    "volume": round(solid.Volume(), 1),
                    "bbox": {"min": [round(bb.xmin, 2), round(bb.ymin, 2), round(bb.zmin, 2)],
                             "max": [round(bb.xmax, 2), round(bb.ymax, 2), round(bb.zmax, 2)]}}

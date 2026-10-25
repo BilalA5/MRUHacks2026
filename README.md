@@ -33,6 +33,13 @@ A pulsing border runs round the 3D view while a drawing change is being turned i
 - Run the model gate: 4 of 5 hand sketches must produce valid operation JSON.
 - Time a manual CAD baseline for the impact number. Don't use an estimate on stage.
 
+## Running it
+
+1. Once: `pip3 install -r requirements.txt`, `npm install`, and `sh freecad/install.sh` (with FreeCAD closed).
+2. Build the iPad canvas after every pull: `npm run build`.
+3. Start the server: `python3 server.py`. It serves the canvas at `http://<laptop address>:8000` (`ipconfig getifaddr en0`).
+4. Start the laptop screen: `sh freecad/start.sh`.
+
 ## Live 3D model (laptop backend)
 
 `model.py` turns the canvas's part description (`partSketch()`, in mm) into a CadQuery solid while the user draws. No AI call is needed for this: extrudes, revolves, through/blind/counterbore/countersink holes, drawn cut-outs, hole patterns and bolt circles all come straight from the drawing. Until a profile is marked, closed outlines show as a 10 mm preview plate.

@@ -231,3 +231,11 @@ async def stream():
 
 # Serves web/index.html at "/" (must stay last so the /api routes win)
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+
+
+# Start with: python3 server.py
+# The live feed never ends on its own, so the server is told to close open feeds a second after Ctrl+C;
+# without that it waits on them forever and the old server keeps FreeCAD while a new one starts.
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_graceful_shutdown=1)

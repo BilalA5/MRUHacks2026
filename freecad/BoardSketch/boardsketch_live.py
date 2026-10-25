@@ -19,7 +19,7 @@ from PySide import QtCore
 import boardsketch_overlay as overlay
 import boardsketch_pulse as pulse
 
-SERVER = os.environ.get("BOARDSKETCH_SERVER", "http://127.0.0.1:8001")
+SERVER = os.environ.get("BOARDSKETCH_SERVER", "http://127.0.0.1:8000")
 DOC = "BoardSketch"
 BUILD_UP_MS = 1400         # length of the animation that builds the part up from the bottom
 QUIET_S = 2.5              # a drawing change with no new model after this long left the part as it was

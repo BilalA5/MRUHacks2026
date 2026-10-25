@@ -1,6 +1,6 @@
 #!/bin/sh
 # Opens FreeCAD straight into the BoardSketch workbench, live from the laptop server.
-# Run the server first: python3 -m uvicorn server:app --host 0.0.0.0 --port 8001
+# Run the server first: python3 server.py (port 8000, the same one the iPad uses)
 #
 # Only the modules BoardSketch needs are loaded: Part (shapes and STEP), Import, Material, Measure and Show.
 # Every other bundled workbench is skipped at startup with --disable-addon, which saves memory and start time.

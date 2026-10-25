@@ -15,6 +15,8 @@ const PAPER = "#FBFBF7";        // drawing paper
 const INK = "#1F2A36";          // graphite lines
 const BLUE = "#2563EB";         // dimensions, marks and centre lines
 const PART_FILL = "#DCE6FB";    // material of a marked profile
+const FILLS = { boss: "#C3D4F8", pocket: "#EEF3FC" };   // a boss shows a shade deeper, a pocket a shade lighter
+const SOLID = ["extrude", "boss"];                    // features with a flat top that a boss or pocket can sit on
 const GRID = 20;                // grid cell in scene px
 const MM_PER_PX = 0.25;         // scale until the first dimension is typed: one 20 px grid cell = 5 mm
 
@@ -178,7 +180,11 @@ function measure(el, dim) {
 const dimsOf = els => els.filter(el => !el.isDeleted && el.customData?.dim);
 
 // mm per scene px. Typed dimensions set the scale (the median of them, as a sketch is never exactly to scale).
+// The first dimension typed fixes the scale (its customData.dim.scale), and editing dimensions later keeps it,
+// so changing one size never stretches the sizes nobody typed. Drawings from before that use the median.
 function mmPerPx(els) {
+  const fixed = dimsOf(els).find(t => t.customData.dim.scale > 0);
+  if (fixed) return fixed.customData.dim.scale;
   const byId = new Map(els.filter(el => !el.isDeleted).map(el => [el.id, el]));
   const ratios = dimsOf(els).map(t => {
     const target = byId.get(t.customData.dim.target), px = target && measure(target, t.customData.dim);
@@ -415,7 +421,10 @@ function planPart(api, picked, axis) {
   const outerIds = new Set(outers.map(o => o.el.id));
   for (const o of outers) {
     // Every closed shape inside the profile is a hole, selected or not, unless it sits inside another hole.
-    const inner = closedShapes(live(api)).filter(s => !outerIds.has(s.id) && within(pts.get(s.id), pts.get(o.el.id)));
+    // A boss or pocket drawn on it, and the holes in those, belong to them instead.
+    const nested = closedShapes(live(api)).filter(t => t.customData?.part?.feature && !outerIds.has(t.id) && within(pts.get(t.id), pts.get(o.el.id)));
+    const inner = closedShapes(live(api)).filter(s => !outerIds.has(s.id) && !s.customData?.part?.feature && within(pts.get(s.id), pts.get(o.el.id))
+      && !nested.some(t => within(pts.get(s.id), pts.get(t.id))));
     o.holes = inner.filter(s => !inner.some(t => t !== s && within(pts.get(s.id), pts.get(t.id))));
   }
   const all = outers.flatMap(o => pts.get(o.el.id));
@@ -439,15 +448,17 @@ function applyPart(api, plan, feature, flash) {
   }
   const labels = plan.outers.map(o => {
     const b = bounds(outline(o.el).pts);
-    const text = feature.feature === "revolve" ? `Revolve ${fmt(feature.angleDeg)}°` : `Extrude ${fmt(feature.depthMm)} mm`;
-    return { type: "text", x: b.minX, y: b.minY - 72, text, fontSize: 14, strokeColor: BLUE };   // above, clear of dimensions and the centre line
+    const edge = feature.topEdge ? `, top edges ${feature.topEdge.kind === "fillet" ? "R" : "C"}${fmt(feature.topEdge.size)}` : "";
+    const text = { revolve: `Revolve ${fmt(feature.angleDeg)}°`, boss: `Boss ${fmt(feature.heightMm)} mm`,
+      pocket: `Pocket ${fmt(feature.depthMm)} mm deep` }[feature.feature] || `Extrude ${fmt(feature.depthMm)} mm`;
+    return { type: "text", x: b.minX, y: b.minY - 72, text: text + edge, fontSize: 14, strokeColor: BLUE };   // above, clear of dimensions and the centre line
   });
   const labelEls = convertToExcalidrawElements(labels).map((e, i) => ({
     ...e, groupIds: [groups.get(plan.outers[i].el.id)], customData: { note: "label", of: plan.outers[i].el.id },
   }));
   const marked = el => {
     if (outerFeature.has(el.id)) {
-      return bump({ ...el, groupIds: [groups.get(el.id)], backgroundColor: PART_FILL, fillStyle: "solid",
+      return bump({ ...el, groupIds: [groups.get(el.id)], backgroundColor: FILLS[feature.feature] || PART_FILL, fillStyle: "solid",
         customData: { ...(el.customData || {}), part: outerFeature.get(el.id) } });
     }
     // A hole keeps its Hole-tool spec and its own group inside the part's group.
@@ -759,10 +770,12 @@ function writeBolts(api, profile, bolts) {
 }
 
 // ---- partSketch: the drawing as a part, in mm with Y up. This is what the laptop builds from. ----
-//   { units, mmPerPx, scaleFrom, features: [{ type: "extrude" | "revolve", depth | angle, axis, profile, holes, boltCircle }],
+//   { units, mmPerPx, scaleFrom, features: [{ type: "extrude" | "revolve" | "boss" | "pocket", depth | angle | height,
+//     on (boss, pocket: the profile it sits on), edge ({kind, size}: top edges), axis, profile, holes, boltCircle }],
 //     dimensions, conflicts, other, notes }
-// Shapes: { type: "rect", center, width, height } · { type: "circle", center, diameter }
-//         { type: "ellipse", center, rx, ry } · { type: "polygon" | "polyline", points, edgeDims }
+// Shapes: { type: "rect", center, width, height, corners? } · { type: "circle", center, diameter }
+//         { type: "ellipse", center, rx, ry } · { type: "polygon" | "polyline", points, edgeDims, corners? }
+//         corners: [{ at: [x, y], kind: "fillet" | "chamfer", size }] from the Round tool
 // Holes:  { type: "hole", kind, center, diameter, depth? | cbDiameter, cbDepth? | cskDiameter, cskAngle? }
 //         (pattern copies are listed as holes of their own), or a drawn shape cut through.
 // boltCircle: { count, diameter, pcd }, holes parallel to the axis, through all, the first in the sketch plane.
@@ -770,6 +783,11 @@ function partSketch(elements) {
   const f = sheetFrame(elements);
   const { els, s, byId, dims, profiles, geometry, P } = f;
   const dimsFor = id => dims.filter(d => d.target === id);
+  // Corners made with Round, as {at: corner in mm, kind: fillet | chamfer, size}
+  const cornersOf = el => {
+    const o = outline(el), cs = (el.customData?.corners || []).filter(c => o?.pts[c.i]);
+    return cs.length ? { corners: cs.map(c => ({ at: P(o.pts[c.i]), kind: c.kind, size: c.size })) } : {};
+  };
 
   const shape = el => {
     const d = dimsFor(el.id);
@@ -783,10 +801,10 @@ function partSketch(elements) {
       const [x1, y1] = P({ x: el.x, y: el.y + el.height }), [x2, y2] = P({ x: el.x + el.width, y: el.y });
       const centre = [r2((x1 + x2) / 2), r2((y1 + y2) / 2)];
       return el.type === "rectangle"
-        ? { type: "rect", center: centre, width: r2(x2 - x1), height: r2(y2 - y1) }
+        ? { type: "rect", center: centre, width: r2(x2 - x1), height: r2(y2 - y1), ...cornersOf(el) }
         : { type: "ellipse", center: centre, rx: r2((x2 - x1) / 2), ry: r2((y2 - y1) / 2) };
     }
-    return { type: o.closed ? "polygon" : "polyline", points: o.pts.map(P), edgeDims: d.map(k => ({ edge: k.edge, mm: k.mm })) };
+    return { type: o.closed ? "polygon" : "polyline", points: o.pts.map(P), edgeDims: d.map(k => ({ edge: k.edge, mm: k.mm })), ...(o.closed ? cornersOf(el) : {}) };
   };
   const hole = el => {
     const { spec, of } = holeOf(el);
@@ -804,7 +822,10 @@ function partSketch(elements) {
       const ends = axis ? [axis.points[0], axis.points[axis.points.length - 1]].map(([px, py]) => P({ x: axis.x + px, y: axis.y + py })) : null;
       return { id: el.id, type: "revolve", angle: part.angleDeg, axis: ends, profile: shape(el), holes, ...(part.boltCircle ? { boltCircle: part.boltCircle } : {}) };
     }
-    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes };
+    const edge = part.topEdge ? { edge: part.topEdge } : {};
+    if (part.feature === "boss") return { id: el.id, type: "boss", on: part.on, height: part.heightMm, profile: shape(el), holes, ...edge };
+    if (part.feature === "pocket") return { id: el.id, type: "pocket", on: part.on, depth: part.depthMm, profile: shape(el), holes };
+    return { id: el.id, type: "extrude", depth: part.depthMm, profile: shape(el), holes, ...edge };
   });
 
   const used = new Set([...profiles.map(el => el.id), ...els.filter(el => profiles.some(p => p.id === holeOf(el)?.of)).map(el => el.id)]);
@@ -896,6 +917,36 @@ function tidyLine(api, el) {
   return same ? null : reshape(el, q, closed);
 }
 
+// ---- Round: a corner of a straight-sided outline rounded (fillet) or cut off (chamfer). ----
+// Stored on the outline as customData.corners = [{ i: corner index, kind, size in mm }], with a blue
+// R or C note by each corner. A rectangle cut-out with its corners rounded to half its width is a slot.
+
+// The biggest size the picked corners take, in mm: a corner's sides limit it, halved when the corner at a
+// side's other end is rounded too, and a fillet in a sharp corner needs room for its tangents.
+function cornerLimit(f, el, picked, kind) {
+  const pts = outline(el).pts.map(f.P), n = pts.length;
+  const rounded = new Set([...(el.customData?.corners || []).map(c => c.i), ...picked]);
+  return Math.min(...picked.map(i => {
+    const [a, b, c] = [pts[(i - 1 + n) % n], pts[(i + 1) % n], pts[i]];
+    const u = [a[0] - c[0], a[1] - c[1]], v = [b[0] - c[0], b[1] - c[1]];
+    const side = Math.min(Math.hypot(...u) / (rounded.has((i - 1 + n) % n) ? 2 : 1), Math.hypot(...v) / (rounded.has((i + 1) % n) ? 2 : 1));
+    const angle = Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1]) / (Math.hypot(...u) * Math.hypot(...v)))));
+    return side * (kind === "fillet" ? Math.tan(angle / 2) : 1);
+  }));
+}
+
+function writeCorners(api, el, corners) {
+  const o = outline(el), c = o.pts.reduce((t, q) => ({ x: t.x + q.x / o.pts.length, y: t.y + q.y / o.pts.length }), { x: 0, y: 0 });
+  const partGid = el.groupIds.find(g => g.startsWith("part-"));
+  const notes = convertToExcalidrawElements(corners.filter(k => o.pts[k.i]).map(k => {
+    const q = o.pts[k.i], d = Math.hypot(q.x - c.x, q.y - c.y) || 1;
+    return { type: "text", x: q.x + (q.x - c.x) / d * 16 - 10, y: q.y + (q.y - c.y) / d * 16 - 8,
+      text: `${k.kind === "fillet" ? "R" : "C"}${fmt(k.size)}`, fontSize: 12, strokeColor: BLUE };
+  })).map(n => ({ ...n, groupIds: partGid ? [partGid] : [], customData: { note: "corner", of: el.id } }));
+  const kept = api.getSceneElements().filter(x => !(x.customData?.note === "corner" && x.customData.of === el.id));
+  commit(api, [...kept.map(x => x.id === el.id ? bump({ ...x, customData: { ...(x.customData || {}), corners } }) : x), ...notes]);
+}
+
 function toggleGrid(api) {
   api.updateScene({ appState: { gridModeEnabled: !api.getAppState().gridModeEnabled } });
 }
@@ -922,6 +973,7 @@ const SECTIONS = [
   ] },
   { title: "Part", items: [
     { label: "Profile", icon: "Layers", mode: "profile" },
+    { label: "Round", icon: "Frame", mode: "round" },
     { label: "Hole", icon: "Crosshairs", mode: "hole" },
     { label: "Pattern", icon: "Category", mode: "pattern" },
   ] },
@@ -930,7 +982,8 @@ const SECTIONS = [
 const PICK_HINTS = {
   centre: "Draw the centre line",
   mirror: "Tap the shape to mirror",
-  profile: "Tap inside the outline to make it a part",
+  profile: "Tap inside the outline to make it a part, or a shape on a part for a boss or pocket",
+  round: "Tap a corner to round or chamfer it",
   dim: "Tap an edge or a circle to dimension it",
   hole: "Tap inside a profile where the hole goes",
   pattern: "Tap a hole to repeat it, or a revolved profile for bolt holes",
@@ -1005,6 +1058,7 @@ function App() {
     else if (mode === "hole") pickHole(p, tol);
     else if (mode === "pattern") pickPattern(p, tol);
     else if (mode === "mirror") pickMirror(p, tol);
+    else if (mode === "round") pickRound(p, tol);
     else pickProfile(p, tol);
   };
 
@@ -1015,13 +1069,28 @@ function App() {
     mirrorShapes(api, [el], flash);
   };
 
+  // A shape drawn inside a part can be a boss on it or a pocket in it: base is the smallest flat-topped part round it.
   const openPart = plan => {
-    const was = plan.outers[0].el.customData?.part;
-    setDialog({ type: "part", plan, mode: plan.axis ? "revolve" : "extrude", depth: fmt(was?.depthMm ?? 10), angle: fmt(was?.angleDeg ?? 360) });
+    const el = plan.outers[0].el, was = el.customData?.part, pts = outline(el).pts;
+    const base = closedShapes(live(api)).filter(o => o.id !== el.id && SOLID.includes(o.customData?.part?.feature) && within(pts, outline(o).pts))
+      .sort((a, b) => area(outline(a).pts) - area(outline(b).pts))[0] || null;
+    const mode = was?.feature && (base || !["boss", "pocket"].includes(was.feature)) ? was.feature : base ? "boss" : plan.axis ? "revolve" : "extrude";
+    setDialog({ type: "part", plan, base, mode, depth: fmt(was?.depthMm ?? was?.heightMm ?? (base ? 5 : 10)), angle: fmt(was?.angleDeg ?? 360),
+      edgeKind: was?.topEdge?.kind || "none", edgeSize: fmt(was?.topEdge?.size ?? 1) });
+  };
+
+  const pickRound = (p, tol) => {
+    let best = null;
+    for (const el of closedShapes(live(api)).filter(el => el.type !== "ellipse" && el.type !== "freedraw")) {
+      outline(el).pts.forEach((q, i) => { const d = dist(p, q); if (d <= 1.5 * tol && (!best || d < best.d)) best = { d, el, i }; });
+    }
+    if (!best) return flash("Tap a corner of a straight-sided outline. Snap a pen stroke first", "warn");
+    const was = best.el.customData?.corners?.find(c => c.i === best.i);
+    setDialog({ type: "round", el: best.el, corner: best.i, kind: was?.kind || "fillet", size: fmt(was?.size ?? 5), scope: "one", had: !!was });
   };
 
   const pickProfile = (p, tol) => {
-    const hit = partAt(p, tol);
+    const hit = partAt(p, tol, true);
     if (!hit) return flash("Tap inside a closed outline: a shape, or a line or stroke that ends where it started", "warn");
     openPart(planPart(api, [hit.profile], null));
   };
@@ -1034,17 +1103,23 @@ function App() {
       const dim = hit.editing.customData.dim;
       const el = live(api).find(x => x.id === dim.target);
       if (!el) return flash("That dimension's shape was deleted", "warn");
-      return setDialog({ type: "dim", pick: { el, kind: dim.kind, edge: dim.edge, replaces: hit.editing.groupIds[0] }, value: fmt(dim.mm) });
+      return setDialog({ type: "dim", pick: { el, kind: dim.kind, edge: dim.edge, replaces: hit.editing.groupIds[0], scale: dim.scale }, value: fmt(dim.mm) });
     }
     const drawn = measure(hit.el, hit) * mmPerPx(api.getSceneElements());
     setDialog({ type: "dim", pick: hit, value: fmt(Math.round(drawn * 2) / 2) });
   };
 
   // What a tap on the drawing lands in: a hole (or a circle drawn inside an outline) and its profile,
-  // or else the largest closed outline round the tap.
-  const partAt = (p, tol) => {
+  // or else the smallest part round the tap, or the largest outline when nothing there is a part yet.
+  // forProfile: a shape drawn on a part, plain cut-outs included, is picked itself, to become a boss or pocket.
+  const partAt = (p, tol, forProfile = false) => {
     const els = live(api), byId = new Map(els.map(el => [el.id, el]));
-    const outlines = closedShapes(els).filter(el => !holeOf(el));
+    const outlines = closedShapes(els).filter(el => !holeOf(el) || (forProfile && !holeOf(el).spec));
+    const isPart = el => [...SOLID, "pocket"].includes(el.customData?.part?.feature);
+    if (forProfile) {
+      const all = outlines.filter(o => inside(p, outline(o).pts)).sort((a, b) => area(outline(b).pts) - area(outline(a).pts));
+      return all.length ? { profile: isPart(all[0]) ? all[all.length - 1] : all[0] } : null;
+    }
     const around = q => outlines.filter(o => inside(q, outline(o).pts)).sort((a, b) => area(outline(b).pts) - area(outline(a).pts));
     const circle = els.find(el => isRound(el) && dist(p, centreOf(el)) <= el.width / 2 + tol && (holeOf(el) || around(centreOf(el)).some(o => o.id !== el.id)));
     if (circle) {
@@ -1052,7 +1127,7 @@ function App() {
       const profile = byId.get(holeOf(first)?.of) || around(centreOf(first)).find(o => o.id !== first.id);
       if (profile) return { hole: first, profile };
     }
-    const profile = around(p)[0];
+    const profile = [...around(p)].reverse().find(isPart) || around(p)[0];
     return profile ? { profile } : null;
   };
 
@@ -1118,6 +1193,12 @@ function App() {
     if (dialog.type === "pattern") {
       const f = sheetFrame(api.getSceneElements()), box = profileBox(f, dialog.profile);
       return patternProblem(box, holeOf(dialog.hole)?.spec || specFromCircle(f, box, dialog.hole), patternOf(dialog));
+    }
+    if (dialog.type === "round") {
+      const size = parseFloat(dialog.size), limit = cornerLimit(sheetFrame(api.getSceneElements()), dialog.el, roundPicked(dialog), dialog.kind);
+      if (!(size > 0)) return "Enter a size above 0 mm";
+      if (size > limit + 0.01) return `Too big: ${dialog.scope === "all" ? "these corners take" : "this corner takes"} at most ${fmt(Math.floor(limit * 10) / 10)} mm`;
+      return null;
     }
     if (dialog.type === "bolts") {
       const rf = revolveFrame(sheetFrame(api.getSceneElements()), dialog.profile);
@@ -1254,10 +1335,12 @@ function App() {
   const confirmDim = () => {
     const mm = parseFloat(dialog.value);
     if (!(mm > 0)) return flash("Enter a size above 0 mm", "warn");
-    const { el, kind, edge, replaces } = dialog.pick;
+    const { el, kind, edge, replaces, scale: was } = dialog.pick;
     const firstDim = !dimsOf(api.getSceneElements()).length;
     const kept = api.getSceneElements().filter(x => !(replaces && x.groupIds.includes(replaces)));
-    const els = [...kept, ...dimensionElements(el, { kind, edge, mm })];
+    // The first dimension sets the scale from its drawn size; an edited one keeps the scale it set
+    const scale = was || (firstDim ? mm / measure(el, { kind, edge }) : 0);
+    const els = [...kept, ...dimensionElements(el, { kind, edge, mm, ...(scale ? { scale } : {}) })];
     commit(api, els);
     setDialog(null);
     flash(firstDim ? `Scale set: one grid square is ${fmt(GRID * mmPerPx(els))} mm` : replaces ? "Dimension changed" : "Dimension added");
@@ -1265,10 +1348,15 @@ function App() {
 
   const confirmPart = () => {
     const { plan, mode } = dialog;
-    if (mode === "extrude") {
+    const edge = SOLID.includes(mode) && dialog.edgeKind !== "none" ? { kind: dialog.edgeKind, size: parseFloat(dialog.edgeSize) } : null;
+    if (edge && !(edge.size > 0)) return flash("Enter an edge size above 0 mm", "warn");
+    if (mode !== "revolve") {
       const d = parseFloat(dialog.depth);
-      if (!(d > 0)) return flash("Enter a depth above 0 mm", "warn");
-      applyPart(api, plan, { feature: "extrude", depthMm: d }, flash);
+      if (!(d > 0)) return flash(`Enter a ${mode === "boss" ? "height" : "depth"} above 0 mm`, "warn");
+      if (mode !== "extrude" && !dialog.base) return flash("Draw it inside a part to stack it on top", "warn");
+      const feature = mode === "boss" ? { feature: "boss", heightMm: d, on: dialog.base.id }
+        : mode === "pocket" ? { feature: "pocket", depthMm: d, on: dialog.base.id } : { feature: "extrude", depthMm: d };
+      applyPart(api, plan, edge ? { ...feature, topEdge: edge } : feature, flash);
     } else {
       const a = parseFloat(dialog.angle);
       if (!(a > 0 && a <= 360)) return flash("Enter an angle from 1 to 360°", "warn");
@@ -1276,6 +1364,18 @@ function App() {
       if (plan.crossesAxis) return flash("The profile crosses the centre line. Keep it on one side to revolve", "warn");
       applyPart(api, plan, { feature: "revolve", angleDeg: a }, flash);
     }
+    setDialog(null);
+  };
+
+  const roundPicked = d => d.scope === "all" ? [...Array(outline(d.el).pts.length).keys()] : [d.corner];
+  const confirmRound = remove => {
+    if (!remove && problem) return;
+    const { el, kind } = dialog, size = parseFloat(dialog.size), picked = roundPicked(dialog);
+    const now = live(api).find(x => x.id === el.id) || el;
+    const kept = (now.customData?.corners || []).filter(c => !picked.includes(c.i));
+    writeCorners(api, now, remove ? kept : [...kept, ...picked.map(i => ({ i, kind, size }))]);
+    flash(remove ? `${picked.length > 1 ? "Corners" : "Corner"} made sharp`
+      : `${picked.length > 1 ? "All corners" : "Corner"} ${kind === "fillet" ? "rounded R" : "chamfered C"}${fmt(size)}`);
     setDialog(null);
   };
 
@@ -1439,11 +1539,20 @@ function App() {
       {dialog?.type === "part" && (
         <Dialog onClose={close} label="Profile" onSubmit={confirmPart}
           actions={<><button type="button" onClick={close}>Cancel</button><button type="submit" className="primary">Mark</button></>}>
-          <Seg label="Feature" options={{ extrude: "Extrude", revolve: "Revolve" }} value={dialog.mode} onChange={m => setDialog(d => ({ ...d, mode: m }))} />
-          {dialog.mode === "extrude" ? <Num label="Depth (mm)" autoFocus {...field("depth")} /> : <Num label="Angle (°)" {...field("angle")} />}
+          <Seg label="Feature" options={dialog.base ? { boss: "Boss", pocket: "Pocket", extrude: "Extrude", revolve: "Revolve" } : { extrude: "Extrude", revolve: "Revolve" }}
+            value={dialog.mode} onChange={m => setDialog(d => ({ ...d, mode: m }))} />
+          {dialog.mode === "revolve" ? <Num label="Angle (°)" {...field("angle")} />
+            : <Num label={dialog.mode === "boss" ? "Height (mm)" : "Depth (mm)"} autoFocus {...field("depth")} />}
+          {SOLID.includes(dialog.mode) && <>
+            <Seg label="Top edges" options={{ none: "Sharp edges", fillet: "Round", chamfer: "Chamfer" }} value={dialog.edgeKind}
+              onChange={k => setDialog(d => ({ ...d, edgeKind: k }))} />
+            {dialog.edgeKind !== "none" && <Num label={dialog.edgeKind === "fillet" ? "Edge radius (mm)" : "Edge chamfer (mm)"} {...field("edgeSize")} />}
+          </>}
           <p className={"eng-note" + (dialog.mode === "revolve" && (!dialog.plan.axis || dialog.plan.crossesAxis) ? " warn" : "")}>
             {dialog.mode === "revolve" && !dialog.plan.axis ? "Draw a centre line beside the profile to revolve round it."
               : dialog.mode === "revolve" && dialog.plan.crossesAxis ? "The profile crosses the centre line. Keep it on one side."
+              : dialog.mode === "boss" ? "Stands on top of the part it is drawn on" + (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} through all` : "")
+              : dialog.mode === "pocket" ? "Cut down into the part it is drawn on" + (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} through all` : "")
               : `${dialog.plan.outers.length > 1 ? dialog.plan.outers.length + " profiles" : "1 profile"}` +
                 (holes ? `, ${holes} hole${holes > 1 ? "s" : ""} cut through` : ", no holes")}
           </p>
@@ -1486,6 +1595,20 @@ function App() {
             <Seg label="Direction" options={{ right: "→", left: "←", up: "↑", down: "↓" }} value={dialog.dir} onChange={v => setDialog(d => ({ ...d, dir: v }))} />
           )}
           {note(dialog.mode === "row" ? "Copies of the hole, spaced from its centre" : "Copies spaced evenly round the profile's centre, through this hole")}
+        </Dialog>
+      )}
+
+      {dialog?.type === "round" && (
+        <Dialog onClose={close} label="Round corner" onSubmit={() => confirmRound(false)}
+          actions={<>
+            {dialog.had && <button type="button" className="danger" onClick={() => confirmRound(true)}>Sharp</button>}
+            <button type="button" onClick={close}>Cancel</button>
+            <button type="submit" className="primary" disabled={!!problem}>Set</button>
+          </>}>
+          <Seg label="Kind" options={{ fillet: "Round", chamfer: "Chamfer" }} value={dialog.kind} onChange={k => setDialog(d => ({ ...d, kind: k }))} />
+          <Num label={dialog.kind === "fillet" ? "Radius (mm)" : "Chamfer (mm)"} autoFocus {...field("size")} />
+          <Seg label="Corners" options={{ one: "This corner", all: "All corners" }} value={dialog.scope} onChange={v => setDialog(d => ({ ...d, scope: v }))} />
+          {note(dialog.kind === "fillet" ? "Round a cut-out's corners to half its width for a slot" : "Cut off at 45°, the same size along both sides")}
         </Dialog>
       )}
 
