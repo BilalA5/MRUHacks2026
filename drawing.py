@@ -208,7 +208,7 @@ def write_svg(solid, features, info, path):
     mat = info.get("material") or {}
     thick = f"{base['depth']:g} mm" if base else "-"
     size = " × ".join(f"{b - a:.1f}" for a, b in zip(info["bbox"]["min"], info["bbox"]["max"])) if info.get("bbox") else "-"
-    block = [("PART", "BoardSketch part"), ("MATERIAL", mat.get("name", "not set")), ("THICKNESS", thick),
+    block = [("PART", "Bevel part"), ("MATERIAL", mat.get("name", "not set")), ("THICKNESS", thick),
              ("SIZE", f"{size} mm"), ("MASS", f"{info['mass']:g} g" if info.get("mass") else "-"),
              ("SCALE", _scale_label(s)), ("DATE", time.strftime("%Y-%m-%d"))]
     bx0, by0 = 188, 160

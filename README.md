@@ -1,4 +1,6 @@
-# MRUHacks 2026
+# Bevel
+
+Sketch a part on the iPad; Bevel builds it in 3D as you draw. Our MRU Hacks 2026 project.
 
 Working repo for our MRU Hacks 2026 project.
 
@@ -16,7 +18,7 @@ Demo parts, in priority order: mounting bracket, flanged pipe, spur gear (stretc
 
 ## Laptop screen (FreeCAD)
 
-The `freecad/` folder is a FreeCAD workbench, BoardSketch, that shows the part live while it is drawn.
+The `freecad/` folder is a FreeCAD workbench, Bevel, that shows the part live while it is drawn.
 It follows the bridge's live feed (`/api/stream`): on each `model` event from the CadQuery builder it downloads
 the STEP from `/api/model` and swaps it into the 3D view, with a build-up animation when the part changes shape.
 A pulsing border runs round the 3D view while a drawing change is being turned into a model.
@@ -26,8 +28,8 @@ A pulsing border runs round the 3D view while a drawing change is being turned i
   Run it again if FreeCAD ever opens with its toolbars or panels missing: it clears the saved layout so
   FreeCAD starts with its own defaults.
 - Run, with the server up: `sh freecad/start.sh`. Every FreeCAD workbench stays available; Focus in the
-  BoardSketch toolbar hides or shows FreeCAD's own toolbars and panels. `sh freecad/start.sh lite` loads
-  only the modules BoardSketch needs, for a slow machine.
+  Bevel toolbar hides or shows FreeCAD's own toolbars and panels. `sh freecad/start.sh lite` loads
+  only the modules Bevel needs, for a slow machine.
 
 ## Open items
 

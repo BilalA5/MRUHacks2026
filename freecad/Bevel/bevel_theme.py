@@ -1,4 +1,4 @@
-# The BoardSketch look for FreeCAD: a calm dark theme in the pulsing border's palette (navy, blue, cyan),
+# The Bevel look for FreeCAD: a calm dark theme in the pulsing border's palette (navy, blue, cyan),
 # and a focus mode that leaves the 3D part the whole screen. Everything is undone when the workbench is left.
 import FreeCAD as App
 import FreeCADGui as Gui
@@ -58,12 +58,12 @@ _closing = None     # watches FreeCAD's window for quitting
 class _BeforeQuit(QtCore.QObject):
     """FreeCAD saves which toolbars and panels are showing when it quits, and starts with them that way next
     time, in every workbench. Focus mode is undone just before, so FreeCAD never remembers its tools as hidden.
-    If the quit is cancelled (say, at the save prompt), the BoardSketch look comes back."""
+    If the quit is cancelled (say, at the save prompt), the Bevel look comes back."""
 
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.Close and _saved is not None:
             restore()
-            QtCore.QTimer.singleShot(0, lambda: obj.isVisible() and Gui.activeWorkbench().name() == "BoardSketchWorkbench" and apply())
+            QtCore.QTimer.singleShot(0, lambda: obj.isVisible() and Gui.activeWorkbench().name() == "BevelWorkbench" and apply())
         return False
 
 
@@ -96,10 +96,10 @@ def apply():
 
 
 def focus(on):
-    """Focus mode: only the BoardSketch toolbar and the 3D view; panels, other toolbars and tabs are hidden."""
+    """Focus mode: only the Bevel toolbar and the 3D view; panels, other toolbars and tabs are hidden."""
     global _focused
     if _saved is None:
-        return          # the BoardSketch look is off, so nothing is hidden or to show again
+        return          # the Bevel look is off, so nothing is hidden or to show again
     _focused = on
     mw = Gui.getMainWindow()
     if on:
@@ -109,7 +109,7 @@ def focus(on):
                 dock.visibilityChanged.connect(lambda shown, d=dock: shown and _focused and QtCore.QTimer.singleShot(0, d.hide))
                 _watched.add(dock)
         hide = [w for w in mw.findChildren(QtWidgets.QDockWidget) if w.isVisible()]
-        hide += [t for t in mw.findChildren(QtWidgets.QToolBar) if t.isVisible() and t.objectName() != "BoardSketch"]
+        hide += [t for t in mw.findChildren(QtWidgets.QToolBar) if t.isVisible() and t.objectName() != "Bevel"]
         hide += [s for s in [mw.statusBar()] if s.isVisible()]
         for w in hide:
             w.hide()

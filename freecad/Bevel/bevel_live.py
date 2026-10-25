@@ -16,12 +16,12 @@ import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtCore
 
-import boardsketch_overlay as overlay
-import boardsketch_theme as theme
-import boardsketch_pulse as pulse
+import bevel_overlay as overlay
+import bevel_theme as theme
+import bevel_pulse as pulse
 
-SERVER = os.environ.get("BOARDSKETCH_SERVER", "http://127.0.0.1:8000")
-DOC = "BoardSketch"
+SERVER = os.environ.get("BEVEL_SERVER", "http://127.0.0.1:8000")
+DOC = "Bevel"
 BUILD_UP_MS = 1400         # length of the animation that builds the part up from the bottom
 QUIET_S = 2.5              # a drawing change with no new model after this long left the part as it was
 REFIT = 0.2                # re-fit the camera when the part's size changes by more than this
@@ -30,7 +30,7 @@ PART_COLOR = (0.62, 0.69, 0.78)     # light steel on the dark background
 EDGE_COLOR = (0.04, 0.06, 0.09)
 PREVIEW_TRANSPARENCY = 55           # an outline not yet marked as a profile shows see-through
 SEE_THROUGH = 60                    # a part with another part set inside it shows see-through
-SKETCH_COLOR = (0.13, 0.83, 0.93)   # loose iPad lines, in the BoardSketch accent
+SKETCH_COLOR = (0.13, 0.83, 0.93)   # loose iPad lines, in the Bevel accent
 
 
 def part_objects(doc):
@@ -77,7 +77,7 @@ def listen(events, stop):
 
 def fetch(url):
     """Downloads a model file to a temporary path (on the listening thread, so the view never waits)."""
-    fd, path = tempfile.mkstemp(prefix="boardsketch-", suffix=".brep")
+    fd, path = tempfile.mkstemp(prefix="bevel-", suffix=".brep")
     with os.fdopen(fd, "wb") as out, urllib.request.urlopen(url, timeout=30) as res:
         out.write(res.read())
     return path
@@ -322,7 +322,7 @@ def shine(vo, color, metallic, roughness):
         else:                                   # FreeCAD 0.21
             vo.ShapeMaterial = mat
     except Exception as e:                      # never lose the part over its look: fall back to plain colour
-        App.Console.PrintWarning(f"BoardSketch: material look not set ({e}), using plain colour\n")
+        App.Console.PrintWarning(f"Bevel: material look not set ({e}), using plain colour\n")
         vo.ShapeColor = color
 
 
