@@ -265,6 +265,11 @@ const HOLD_MS = 450;    // how long the pen must stay still before lifting
 const HOLD_MOVE = 8;    // screen px the pen may drift and still count as still
 const TAP_PX = 6;       // a stroke smaller than this is a Pencil tap, not a drawing
 const JOIN_PX = 12;     // line ends this close are joined into one line
+// A mouse or trackpad wobbles far more than a Pencil, and cannot easily be held still at the end of a stroke.
+// Its strokes get looser tolerances, and any outline whose ends meet snaps on lift, not only when held.
+// Sizes are in screen px (px = scene px per screen px), so snapping works the same at any zoom.
+const PEN = { px: 1, loose: false };
+const MOUSE = typeof matchMedia === "function" && matchMedia("(hover: hover) and (pointer: fine)").matches;   // a laptop, not the iPad
 
 // Ramer–Douglas–Peucker: the few corners that describe a hand-drawn path within eps px.
 function corners(pts, eps) {
@@ -304,9 +309,9 @@ function circleThrough(a, b, c) {
 
 // An open stroke that follows a circle: its points, every 7.5° from its start. A sweep within 10° of a
 // quarter or half turn is made exactly that, as drawings use them for rounded corners and slot ends.
-function recogniseArc(pts) {
+function recogniseArc(pts, { px, loose } = PEN) {
   const c = circleThrough(pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]);
-  if (!c || c.r > 2000 || !pts.every(p => Math.abs(dist(p, c) - c.r) <= Math.max(4, 0.08 * c.r))) return null;
+  if (!c || c.r > 2000 * px || !pts.every(p => Math.abs(dist(p, c) - c.r) <= Math.max((loose ? 8 : 4) * px, (loose ? 0.12 : 0.08) * c.r))) return null;
   const ang = p => Math.atan2(p.y - c.y, p.x - c.x);
   let sweep = 0;
   for (let i = 1; i < pts.length; i++) sweep += (ang(pts[i]) - ang(pts[i - 1]) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
@@ -320,38 +325,40 @@ function recogniseArc(pts) {
 // Returns {name, skeleton} for a line, arc, circle, rectangle, ellipse, triangle or straight-sided outline, or null.
 // Ellipses, triangles and other straight-sided outlines are only made from a held stroke (held), as a quick
 // sketch is often meant freehand.
-function recogniseStroke(pts, held = true) {
+function recogniseStroke(pts, held = true, by = PEN) {
+  const { px, loose } = by;
   const a = pts[0], b = pts[pts.length - 1];
   const { minX, maxX, minY, maxY } = bounds(pts);
   const w = maxX - minX, h = maxY - minY, size = Math.max(w, h);
-  if (size < 20) return null;
+  if (size < 20 * px) return null;
   const len = dist(a, b);
-  // A long line is allowed more wobble: 6 px, or 2.5% of its length
-  if (len >= 0.7 * size && Math.max(...pts.map(p => segDist(p, a, b))) <= Math.max(6, 0.025 * len)) {
+  // A long line is allowed more wobble: 6 px, or 2.5% of its length (12 px or 5% from a mouse)
+  if (len >= 0.7 * size && Math.max(...pts.map(p => segDist(p, a, b))) <= (loose ? Math.max(12 * px, 0.05 * len) : Math.max(6 * px, 0.025 * len))) {
     return { name: "line", skeleton: { type: "line", x: a.x, y: a.y, points: [[0, 0], [b.x - a.x, b.y - a.y]] } };
   }
   if (len > 0.25 * size) {
-    const arc = recogniseArc(pts);
+    const arc = recogniseArc(pts, by);
     return arc ? { name: "arc", skeleton: polyline(arc, false, {}) } : null;
   }
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   if (Math.min(w, h) / Math.max(w, h) >= 0.77) {          // closer to round than 1.3 : 1
     const r = (w + h) / 4;
     // A held stroke asked to be snapped, so a rougher loop still counts as a circle rather than a many-sided outline
-    if (pts.every(p => Math.abs(dist(p, { x: cx, y: cy }) - r) <= (held ? 0.25 : 0.15) * r)) {
+    if (pts.every(p => Math.abs(dist(p, { x: cx, y: cy }) - r) <= (held || loose ? 0.25 : 0.15) * r)) {
       return { name: "circle", skeleton: { type: "ellipse", x: cx - r, y: cy - r, width: 2 * r, height: 2 * r } };
     }
   }
-  const tol = 0.12 * Math.min(w, h);
+  const tol = (loose ? 0.16 : 0.12) * Math.min(w, h);
   const near = pts.filter(p => Math.min(Math.abs(p.x - minX), Math.abs(p.x - maxX), Math.abs(p.y - minY), Math.abs(p.y - maxY)) <= tol).length;
-  const outlineCorners = dropStraight(corners(pts, 0.05 * size).slice(0, -1));
-  if (w >= 20 && h >= 20 && Math.max(w, h) / Math.min(w, h) <= 4 && near / pts.length >= 0.85 && outlineCorners.length <= 4) {
+  const outlineCorners = dropStraight(corners(pts, (loose ? 0.07 : 0.05) * size).slice(0, -1));
+  if (w >= 20 * px && h >= 20 * px && Math.max(w, h) / Math.min(w, h) <= 4 && near / pts.length >= (loose ? 0.8 : 0.85) && outlineCorners.length <= 4) {
     return { name: "rectangle", skeleton: { type: "rectangle", x: minX, y: minY, width: w, height: h } };
   }
   // An oval: every point near the ellipse that fills the stroke's box
   const rx = w / 2, ry = h / 2;
-  if (held && rx > 10 && ry > 10 && outlineCorners.length > 4
-    && pts.every(p => Math.abs(Math.hypot((p.x - cx) / rx, (p.y - cy) / ry) - 1) <= 0.18)) {
+  held ||= loose;          // a mouse stroke whose ends meet is meant as a shape
+  if (held && rx > 10 * px && ry > 10 * px && outlineCorners.length > 4
+    && pts.every(p => Math.abs(Math.hypot((p.x - cx) / rx, (p.y - cy) / ry) - 1) <= (loose ? 0.22 : 0.18))) {
     return { name: "ellipse", skeleton: { type: "ellipse", x: minX, y: minY, width: w, height: h } };
   }
   if (held && outlineCorners.length === 3) {
@@ -366,12 +373,13 @@ function recogniseStroke(pts, held = true) {
 
 // Replaces a freehand stroke with the recognised shape, keeping its colour and stroke width.
 // held: the pen was held still at the end, so any outline may be made and a miss is reported.
-function snapStroke(api, el, flash, held) {
+// pointer: "pen", "mouse" or "touch", whatever drew the stroke.
+function snapStroke(api, el, flash, held, pointer = "pen") {
   const pts = el.points.map(([px, py]) => ({ x: el.x + px, y: el.y + py }));
   const others = api.getSceneElements().filter(e => e.id !== el.id);
-  const b = bounds(pts);
-  if (!held && Math.max(b.maxX - b.minX, b.maxY - b.minY) < TAP_PX) return commit(api, others);   // a tap, not a drawing
-  const found = recogniseStroke(pts, held);
+  const b = bounds(pts), by = { px: 1 / api.getAppState().zoom.value, loose: pointer !== "pen" };
+  if (!held && Math.max(b.maxX - b.minX, b.maxY - b.minY) < TAP_PX * by.px) return commit(api, others);   // a tap, not a drawing
+  const found = recogniseStroke(pts, held, by);
   if (!found) return held && flash("Held stroke is not a line, arc, circle, ellipse, rectangle, triangle or straight-sided outline", "warn");
   const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth, strokeStyle: el.strokeStyle };
   const [shape] = convertToExcalidrawElements([{ ...found.skeleton, ...style }]);
@@ -1178,6 +1186,7 @@ function App() {
   const seenStrokes = useRef(new Set());   // freedraw ids already seen in onChange
   const activeStroke = useRef(null);       // the freedraw stroke being drawn now
   const holdPending = useRef(null);        // "held" when a pen lifts after being still, "lift" otherwise
+  const strokeBy = useRef("pen");          // what drew the last stroke: pen, mouse or touch
   const pressAt = useRef(null);            // where and when the current pen press went still
 
   // Every tool reports through here. kind is "ok" or "warn" (the tool could not run).
@@ -1433,6 +1442,7 @@ function App() {
       }
       if (api.getAppState().activeTool.type !== "freedraw") { pressAt.current = null; return; }
       pressAt.current = { id: e.pointerId, x: e.clientX, y: e.clientY, still: performance.now() };
+      strokeBy.current = e.pointerType || "mouse";
     };
     const move = e => {
       if (fingers.has(e.pointerId)) {
@@ -1484,7 +1494,7 @@ function App() {
       const held = holdPending.current === "held";
       holdPending.current = null;
       const el = elements.find(e => e.id === activeStroke.current && e.type === "freedraw" && !e.isDeleted);
-      if (el && (held || autoSnap)) snapStroke(api, el, flash, held);
+      if (el && (held || autoSnap)) snapStroke(api, el, flash, held, strokeBy.current);
     }
     // A line just finished: tidy it, and if Centre line was waiting, make it the centre line.
     if (api && !appState.multiElement && !appState.newElement && !appState.editingLinearElement) {
@@ -1958,7 +1968,9 @@ function App() {
           {toast.sticky && <button type="button" onClick={() => setPick(null)}>Cancel</button>}
         </div>
       ) : empty && !dialog && (
-        <div className="eng-hint">Draw the part's outline with the Pencil. Lines, arcs, circles and rectangles straighten as you lift, and sides that meet join up. Hold still at the end for any straight-sided outline.</div>
+        <div className="eng-hint">{MOUSE
+          ? "Draw the part's outline with the pen tool and the mouse or trackpad. Lines, arcs, circles, rectangles and outlines whose ends meet straighten when you let go, and sides that meet join up."
+          : "Draw the part's outline with the Pencil. Lines, arcs, circles and rectangles straighten as you lift, and sides that meet join up. Hold still at the end for any straight-sided outline."}</div>
       )}
     </div>
   );
