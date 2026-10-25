@@ -5,3 +5,4 @@ sketches/
 node_modules/
 web/dist/
 sessions/
+.vercel
