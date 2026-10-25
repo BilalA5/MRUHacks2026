@@ -43,19 +43,23 @@ Every snapshot from the iPad goes to a background builder. It builds the newest 
 |---|---|
 | Live updates | `GET /api/stream`, event `model` (sent first on connect, then after every rebuild) |
 | Latest model info | `GET /api/model/info` (add `?session=<id>` for one session) |
-| Model files | `GET /api/model?format=glb` (or `stl`, `step`). The `files` URLs in each event already carry the session and a version |
+| Model files | `GET /api/model?format=brep` (or `stl`, `3mf`, `step`, `glb`). Add `&download=1` to save it as `part-<session>-<seq>.<format>`. The `files` URLs in each event already carry the session and a version |
+| Print | `POST /api/print` opens the part (3MF) in the laptop's slicer: Bambu Studio, OrcaSlicer, PrusaSlicer or Cura |
 
 A `model` event looks like:
 
 ```json
 {"session": "k3f9a2", "seq": 42, "status": "ok", "preview": false, "features": 1,
- "volume": 146272.6, "bbox": {"min": [0, -80, -60], "max": [15, 40, 60]}, "buildMs": 27,
- "warnings": [], "files": {"glb": "/api/model?session=k3f9a2&format=glb&v=42", "stl": "...", "step": "..."}}
+ "volume": 146272.6, "bbox": {"min": [0, -80, -60], "max": [15, 40, 60]}, "buildMs": 27, "warnings": [],
+ "sketch": [{"points": [[0, 0], [50, 0]], "closed": false, "role": "sketch"}],
+ "files": {"brep": "/api/model?session=k3f9a2&format=brep&v=42", "stl": "...", "3mf": "...", "step": "...", "glb": "..."}}
 ```
 
-- `status`: `ok`, `empty` (nothing closed drawn yet) or `error` (see `warnings`). On `empty` or `error`, keep showing the last good model.
+- `status`: `ok`; `empty` (nothing closed on the iPad: **remove the part**, so the view matches the canvas); or `error` (see `warnings`: keep the last good part).
 - `preview`: true while nothing is marked as a part yet.
-- Units are mm. The sketch is the XY plane seen from +Z, and extrudes rise along +Z. The GLB is already turned Y-up for three.js; the STL and STEP stay Z-up.
+- `sketch`: the drawing's loose lines and shapes in mm, not yet part of the solid. Draw them on the sketch plane (z = 0). `role` is `sketch`, `hole` or `centre line`.
+- Only the BREP is written on every rebuild (2 ms, and the fastest for FreeCAD to load). The other formats are made when first asked for.
+- Units are mm. The sketch is the XY plane seen from +Z, and extrudes rise along +Z. The GLB is already turned Y-up for three.js; the other formats stay Z-up.
 
 Each build (`sessions/<id>/b000N/`) also gets its own `model.step`, `.stl` and `.glb`.
 

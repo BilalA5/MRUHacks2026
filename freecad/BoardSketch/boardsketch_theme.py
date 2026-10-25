@@ -2,7 +2,7 @@
 # and a focus mode that leaves the 3D part the whole screen. Everything is undone when the workbench is left.
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide import QtWidgets
+from PySide import QtCore, QtWidgets
 
 # Design tokens, shared with the status card.
 BG = "#0B0F17"          # window
@@ -50,6 +50,8 @@ VIEW_SETTINGS = {
 }
 
 _saved = None
+_focused = False    # focus mode is on
+_watched = set()    # panels already set to hide again when FreeCAD shows them
 
 
 def _param(kind, group, name, value=None):
@@ -79,8 +81,15 @@ def apply():
 
 def focus(on):
     """Focus mode: only the BoardSketch toolbar and the 3D view; panels, other toolbars and tabs are hidden."""
+    global _focused
+    _focused = on
     mw = Gui.getMainWindow()
     if on:
+        # FreeCAD pops the Report view back up on any warning, so panels are hidden again whenever they show
+        for dock in mw.findChildren(QtWidgets.QDockWidget):
+            if dock not in _watched:
+                dock.visibilityChanged.connect(lambda shown, d=dock: shown and _focused and QtCore.QTimer.singleShot(0, d.hide))
+                _watched.add(dock)
         hide = [w for w in mw.findChildren(QtWidgets.QDockWidget) if w.isVisible()]
         hide += [t for t in mw.findChildren(QtWidgets.QToolBar) if t.isVisible() and t.objectName() != "BoardSketch"]
         hide += [s for s in [mw.statusBar()] if s.isVisible()]

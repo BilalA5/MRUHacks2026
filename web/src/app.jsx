@@ -1268,6 +1268,32 @@ function App() {
     setPick(mode);
   };
 
+  // 3D file: download the live 3D model the laptop built from this drawing, or open it in the laptop's slicer.
+  const modelOf = async () => {
+    bridgeRef.current?.flush();
+    const res = await fetch(`/api/model/info?session=${bridgeRef.current?.session}`).catch(() => null);
+    const info = res?.ok ? await res.json() : null;
+    return info?.status === "ok" ? info : null;
+  };
+  const downloadModel = async () => {
+    const format = dialog.format;
+    if (!(await modelOf())) return flash("No 3D part yet. Draw a closed outline first", "warn");
+    const a = document.createElement("a");
+    a.href = `/api/model?session=${bridgeRef.current.session}&format=${format}&download=1`;
+    a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+    setDialog(null);
+    flash(`${format.toUpperCase()} downloaded`);
+  };
+  const printModel = async () => {
+    if (!(await modelOf())) return flash("No 3D part yet. Draw a closed outline first", "warn");
+    const res = await fetch(`/api/print?session=${bridgeRef.current.session}`, { method: "POST" }).catch(() => null);
+    const body = res ? await res.json().catch(() => ({})) : {};
+    setDialog(null);
+    if (res?.ok) flash(`Opened in ${body.slicer} on the laptop. Slice it there and print`);
+    else flash(body.detail ? `Could not print: ${body.detail}` : "Laptop not answering", "warn");
+  };
+
   const field = key => ({ value: dialog[key], onChange: v => setDialog(d => ({ ...d, [key]: v })) });
   const close = () => setDialog(null);
   // The note under a dialog's fields: what is wrong with them, or what the tool will do.
@@ -1316,6 +1342,9 @@ function App() {
           </button>
           <button onClick={() => api && exportDxf(api, flash)} title="Download the drawing as DXF">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Upload }} /><span>DXF</span>
+          </button>
+          <button onClick={() => setDialog({ type: "print", format: "stl" })} title="Download the 3D part, or print it">
+            <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Squares }} /><span>3D file</span>
           </button>
         </div>
         <div className="eng-send">
@@ -1380,6 +1409,14 @@ function App() {
             <Seg label="Direction" options={{ right: "→", left: "←", up: "↑", down: "↓" }} value={dialog.dir} onChange={v => setDialog(d => ({ ...d, dir: v }))} />
           )}
           {note(dialog.mode === "row" ? "Copies of the hole, spaced from its centre" : "Copies spaced evenly round the profile's centre, through this hole")}
+        </Dialog>
+      )}
+
+      {dialog?.type === "print" && (
+        <Dialog onClose={close} label="3D file" onSubmit={downloadModel}
+          actions={<><button type="button" onClick={printModel}>Print on laptop</button><button type="submit" className="primary">Download</button></>}>
+          <Seg label="Format" options={{ stl: "STL", "3mf": "3MF", step: "STEP" }} value={dialog.format} onChange={f => setDialog(d => ({ ...d, format: f }))} />
+          {note(dialog.format === "step" ? "STEP keeps exact curves, for other CAD programs" : "For a slicer and a 3D printer")}
         </Dialog>
       )}
 

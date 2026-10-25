@@ -19,7 +19,9 @@ from cadquery import Vector
 PREVIEW_DEPTH = 10      # mm, for closed outlines not yet made into a part (the canvas's default depth)
 PREVIEW_MIN = 3         # mm: smaller closed outlines are Pencil taps, not shapes, and get no preview
 EXTRA = 1               # mm that cutting tools run past the faces they cut, so no skin is left
-FORMATS = {"stl": "model.stl", "step": "model.step", "glb": "model.glb"}
+# brep is OpenCascade's own format: the fastest to write and for FreeCAD to read, so the live view uses it.
+# The others are made when someone downloads or prints the part: 3mf and stl for printers, step for CAD.
+FORMATS = {"brep": "model.brep", "stl": "model.stl", "3mf": "model.3mf", "step": "model.step", "glb": "model.glb"}
 
 build_lock = threading.Lock()   # OpenCascade is not safe to call from two threads at once
 feature_cache = {}              # feature JSON -> solid
@@ -220,17 +222,33 @@ def build(part):
                             "max": [round(bb.xmax, 2), round(bb.ymax, 2), round(bb.zmax, 2)]}}
 
 
-def export(solid, folder):
-    """Writes model.stl, model.step and model.glb into folder, replacing earlier ones only once complete."""
+def export(solid, folder, kinds=FORMATS):
+    """Writes the model in each of kinds into folder, replacing earlier files only once complete."""
     folder.mkdir(parents=True, exist_ok=True)
     with build_lock:
-        for kind, name in FORMATS.items():
+        for kind in kinds:
+            name = FORMATS[kind]
             tmp = folder / f"tmp-{name}"
-            if kind == "glb":
+            if kind == "brep":
+                solid.exportBrep(str(tmp))
+            elif kind == "glb":
                 cq.Assembly(solid, color=cq.Color(0.55, 0.62, 0.72)).export(str(tmp), "GLTF")
             else:
                 cq.exporters.export(solid, str(tmp), kind.upper(), tolerance=0.05, angularTolerance=0.1)
             tmp.replace(folder / name)
+
+
+# The drawing's loose lines and shapes in mm (everything not yet part of the solid), so the laptop
+# can show them on the sketch plane and match the iPad even before there is a closed outline.
+def sketch_lines(part):
+    lines = []
+    for s in part.get("other", []):
+        closed = outline_points(s) if s["type"] != "polyline" else None
+        pts = closed or [tuple(p) for p in s.get("points", [])]
+        if len(pts) >= 2:
+            lines.append({"points": [[round(x, 2), round(y, 2)] for x, y in pts], "closed": bool(closed),
+                          "role": s.get("role", "sketch")})
+    return lines
 
 
 # ---- Live builds from the stream ----
@@ -242,8 +260,21 @@ class LiveBuilder:
         self.session_dir, self.on_model = session_dir, on_model
         self.pending, self.built = None, {}      # built: session -> part JSON of its current model
         self.latest = {}                         # session -> info of its current model
+        self.solids = {}                         # session -> (seq, its current solid or None)
+        self.exported = {}                       # (session, format) -> seq of the model in that file
         self.wake = threading.Condition()
         threading.Thread(target=self.run, daemon=True).start()
+
+    def file(self, session, kind):
+        """Path of the session's current model as kind, written now if this version is not on disk yet."""
+        seq, solid = self.solids.get(session, (None, None))
+        if solid is None:
+            return None
+        folder = self.session_dir / session / "model"
+        if self.exported.get((session, kind)) != seq:
+            export(solid, folder, [kind])
+            self.exported[(session, kind)] = seq
+        return folder / FORMATS[kind]
 
     def submit(self, snap):
         with self.wake:
@@ -268,13 +299,12 @@ class LiveBuilder:
             return   # the drawing changed but the part did not (a stroke moved, a note was retyped)
         started = time.perf_counter()
         solid, info = build(part)
+        info = {"session": session, "seq": snap["seq"], **info, "sketch": sketch_lines(part)}
+        self.built[session], self.latest[session], self.solids[session] = key, info, (snap["seq"], solid)
         if solid is not None:
-            export(solid, self.session_dir / session / "model")
-        info = {"session": session, "seq": snap["seq"], **info,
-                "buildMs": round((time.perf_counter() - started) * 1000)}
-        if solid is not None:
+            self.file(session, "brep")   # only the live view's format now; the rest on request
             info["files"] = {kind: f"/api/model?session={session}&format={kind}&v={snap['seq']}" for kind in FORMATS}
-        self.built[session], self.latest[session] = key, info
+        info["buildMs"] = round((time.perf_counter() - started) * 1000)
         extra = f"  {len(info['warnings'])} warnings" if info["warnings"] else ""
         print(f"[model] {session} #{snap['seq']}  {info['status']}{' (preview)' if info.get('preview') else ''}  "
               f"{info.get('features', 0)} features  {info['buildMs']} ms{extra}")

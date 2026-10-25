@@ -2,6 +2,8 @@ import asyncio
 import base64
 import json
 import re
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -167,17 +169,39 @@ async def model_info(session: str | None = None):
     return info
 
 
+# A plain def, so FastAPI runs it in a worker thread: making a 3MF or STL can take a moment.
+# download=1 makes the browser save it (on the iPad, to Files) as part-<session>-<seq>.<format>.
 @app.get("/api/model")
-async def model_file(session: str | None = None, format: str = "stl"):
+def model_file(session: str | None = None, format: str = "stl", download: bool = False):
     session = session or newest
     if format not in model.FORMATS:
         raise HTTPException(status_code=400, detail=f"format must be one of {', '.join(model.FORMATS)}")
-    if session not in latest:   # only known sessions, so the name can't reach outside sessions/
-        raise HTTPException(status_code=404, detail="no such session")
-    path = SESSION_DIR / session / "model" / model.FORMATS[format]
-    if not path.exists():
+    path = builder.file(session, format) if session in latest else None   # known sessions only
+    if not path:
         raise HTTPException(status_code=404, detail="no model built yet")
-    return FileResponse(path, headers={"Cache-Control": "no-cache"})
+    name = f"part-{session}-{builder.latest[session]['seq']}.{format}" if download else None
+    return FileResponse(path, filename=name, headers={"Cache-Control": "no-cache"})
+
+
+# Print: opens the current model in the laptop's slicer, ready to slice and send to the printer.
+SLICERS = ["BambuStudio", "OrcaSlicer", "PrusaSlicer", "UltiMaker Cura", "Ultimaker Cura"]
+
+
+@app.post("/api/print")
+def print_model(session: str | None = None):
+    session = session or newest
+    path = builder.file(session, "3mf") if session in latest else None
+    if not path:
+        raise HTTPException(status_code=404, detail="nothing to print yet: draw a closed outline first")
+    slicer = next((s for s in SLICERS if Path(f"/Applications/{s}.app").exists()), None)
+    if not slicer:
+        raise HTTPException(status_code=404, detail="no slicer found: install Bambu Studio, OrcaSlicer, PrusaSlicer or Cura")
+    # The slicer gets its own copy, so the next live rebuild can't change the file under it
+    job = SESSION_DIR / session / f"print-{builder.latest[session]['seq']}.3mf"
+    shutil.copy(path, job)
+    subprocess.Popen(["open", "-a", slicer, str(job)])
+    print(f"[print] {session} sent {job.name} to {slicer}")
+    return {"ok": True, "slicer": slicer, "file": job.name}
 
 
 # Server-Sent Events: the current snapshot and model first, then every new snapshot, model and build

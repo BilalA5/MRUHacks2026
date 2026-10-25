@@ -25,6 +25,12 @@ SETTINGS = {
         ("FCBool", "AutoSaveEnabled", "0"),
         ("FCBool", "CreateBackupFiles", "0"),
     ],
+    "OutputWindow": [                            # never pop the Report view up over the 3D view
+        ("FCBool", "checkShowReportViewOnWarning", "0"),
+        ("FCBool", "checkShowReportViewOnError", "0"),
+        ("FCBool", "checkShowReportViewOnNormalMessage", "0"),
+        ("FCBool", "checkShowReportViewOnLogMessage", "0"),
+    ],
     "NotificationArea": [
         ("FCBool", "NotificationAreaEnabled", "0"),
     ],

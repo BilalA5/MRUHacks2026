@@ -2,8 +2,8 @@
 #
 # The feed (GET /api/stream) sends `scene` whenever the drawing changes, `model` when the CadQuery builder
 # (model.py) has turned it into a solid, and `build` when a drawing goes to the AI. A model event carries
-# {session, seq, status: ok | empty | error, preview, features, volume, bbox, warnings, files: {step: url}}.
-# The STEP file is downloaded in the background and loaded into the 3D view.
+# {session, seq, status: ok | empty | error, preview, features, volume, bbox, warnings, sketch, files: {brep: url}}.
+# The BREP file is downloaded in the background and loaded into the 3D view; `sketch` holds the loose lines.
 import json
 import os
 import queue
@@ -28,6 +28,11 @@ REFIT = 0.2                # re-fit the camera when the part's size changes by m
 PART_COLOR = (0.62, 0.69, 0.78)     # light steel on the dark background
 EDGE_COLOR = (0.04, 0.06, 0.09)
 PREVIEW_TRANSPARENCY = 55           # an outline not yet marked as a profile shows see-through
+SKETCH_COLOR = (0.13, 0.83, 0.93)   # loose iPad lines, in the BoardSketch accent
+
+
+def document():
+    return App.getDocument(DOC) if DOC in App.listDocuments() else App.newDocument(DOC)
 
 
 def listen(events, stop):
@@ -51,9 +56,9 @@ def listen(events, stop):
                             events.put(("scene", None))
                         elif name and data:
                             info = json.loads("\n".join(data))
-                            if name == "model" and info.get("files", {}).get("step"):
+                            if name == "model" and info.get("files", {}).get("brep"):
                                 try:
-                                    info["path"] = fetch(SERVER + info["files"]["step"])
+                                    info["path"] = fetch(SERVER + info["files"]["brep"])
                                 except Exception as e:   # keep listening; this model just is not shown
                                     info.update(status="error", warnings=[f"could not download the model: {e}"])
                             events.put((name, info))
@@ -65,7 +70,7 @@ def listen(events, stop):
 
 def fetch(url):
     """Downloads a model file to a temporary path (on the listening thread, so the view never waits)."""
-    fd, path = tempfile.mkstemp(prefix="boardsketch-", suffix=".step")
+    fd, path = tempfile.mkstemp(prefix="boardsketch-", suffix=".brep")
     with os.fdopen(fd, "wb") as out, urllib.request.urlopen(url, timeout=30) as res:
         out.write(res.read())
     return path
@@ -83,6 +88,7 @@ class Live(QtCore.QObject):
         self.generating = False    # a drawing change is waiting for its model
         self.session = None        # the session whose part is on screen
         self.shown = None          # the model info on screen
+        self.sketch_session = None # the session whose loose lines are on screen
         self.last_build = None     # the newest build sent to the AI
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(100)
@@ -158,13 +164,17 @@ class Live(QtCore.QObject):
 
     def on_model(self, info):
         self.generating = False
+        self.draw_sketch(info)
         if info["status"] != "ok" or not info.get("path"):
             self.border.play(False)
             first = (info.get("warnings") or [""])[0]
             if info["status"] == "empty":
-                self.card.show_state("drawing", "Sketching on the iPad", "No closed outline yet")
+                # Nothing closed on the iPad any more, so no part here either: the view matches the canvas
+                self.clear_part()
+                hint = "No closed outline yet" if info.get("sketch") else "Nothing drawn yet"
+                self.card.show_state("drawing", "Sketching on the iPad", hint)
             else:
-                self.card.show_state("offline", "Could not build the part", first)
+                self.card.show_state("offline", "Could not build the part", first)   # the last good part stays
             return
         try:
             self.load(info)
@@ -172,6 +182,35 @@ class Live(QtCore.QObject):
             os.remove(info["path"])
 
     # ---- the model ----
+
+    def clear_part(self):
+        doc = document()
+        if doc.getObject("Part"):
+            doc.removeObject("Part")
+            doc.recompute()
+        self.shown = None
+
+    def draw_sketch(self, info):
+        """The iPad's loose lines and shapes, drawn on the sketch plane: thin lines, centre lines dashed."""
+        import Part
+
+        doc = document()
+        for name, roles, style_ in (("Sketch", ("sketch", "hole"), "Solid"), ("CentreLines", ("centre line",), "Dashed")):
+            wires = [Part.makePolygon([App.Vector(x, y, 0) for x, y in s["points"] + s["points"][:1] * s["closed"]])
+                     for s in info.get("sketch", []) if s["role"] in roles]
+            obj = doc.getObject(name)
+            if not wires:
+                if obj:
+                    doc.removeObject(name)
+                continue
+            obj = obj or doc.addObject("Part::Feature", name)
+            obj.Shape = Part.makeCompound(wires)
+            obj.ViewObject.LineColor, obj.ViewObject.LineWidth, obj.ViewObject.DrawStyle = SKETCH_COLOR, 2, style_
+        doc.recompute()
+        if not self.shown and info.get("sketch") and info["session"] != self.sketch_session:
+            Gui.getDocument(doc.Name).activeView().viewTop()   # a new drawing: look down on the sketch
+            Gui.getDocument(doc.Name).activeView().fitAll()
+        self.sketch_session = info["session"]
 
     def load(self, info):
         import Part
@@ -183,7 +222,7 @@ class Live(QtCore.QObject):
             self.border.play(False)
             self.card.show_state("offline", "Could not open the model", str(e))
             return
-        doc = App.getDocument(DOC) if DOC in App.listDocuments() else App.newDocument(DOC)
+        doc = document()
         obj = doc.getObject("Part") or doc.addObject("Part::Feature", "Part")
         before = self.shown
         new_session = info["session"] != self.session
