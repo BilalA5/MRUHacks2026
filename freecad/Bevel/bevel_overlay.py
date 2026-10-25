@@ -1,9 +1,9 @@
 # A status card over FreeCAD's 3D view: whether the iPad is sketching, a part is building, or which part is shown.
-# Styled with the BoardSketch theme: a dark surface card, light text and the cyan accent.
+# Styled with the Bevel theme: a dark surface card, light text and the cyan accent.
 from PySide import QtCore, QtWidgets
 
 import FreeCADGui as Gui
-from boardsketch_theme import ACCENT, BORDER, MUTED, SURFACE, TEXT
+from bevel_theme import ACCENT, BORDER, MUTED, SURFACE, TEXT
 
 COLORS = {"live": "#22c55e", "drawing": ACCENT, "building": ACCENT, "waiting": MUTED, "offline": "#f59e0b"}
 

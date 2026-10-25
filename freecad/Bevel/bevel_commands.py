@@ -1,4 +1,4 @@
-# Toolbar commands of the BoardSketch workbench. They live in their own module because FreeCAD runs
+# Toolbar commands of the Bevel workbench. They live in their own module because FreeCAD runs
 # InitGui.py in a namespace that its later calls cannot see.
 import FreeCADGui as Gui
 
@@ -8,7 +8,7 @@ class Live:
         return {"MenuText": "Live from iPad", "ToolTip": "Show parts from the iPad as they are built", "Checkable": True}
 
     def Activated(self, checked=True):
-        from boardsketch_live import LIVE
+        from bevel_live import LIVE
         LIVE.start() if checked else LIVE.close()
 
     def IsActive(self):
@@ -34,8 +34,8 @@ class Focus:
         return {"MenuText": "Focus", "ToolTip": "Hide FreeCAD's panels and toolbars so the part has the screen", "Checkable": True}
 
     def Activated(self, checked=True):
-        import boardsketch_theme
-        boardsketch_theme.focus(checked)
+        import bevel_theme
+        bevel_theme.focus(checked)
 
     def IsActive(self):
         return True
@@ -48,7 +48,7 @@ class Download:
     def Activated(self):
         import urllib.request
         from PySide import QtWidgets
-        from boardsketch_live import LIVE, SERVER
+        from bevel_live import LIVE, SERVER
         info = LIVE.shown
         name = f"part-{info['session']}-{info['seq']}"
         path, chosen = QtWidgets.QFileDialog.getSaveFileName(
@@ -62,7 +62,7 @@ class Download:
         LIVE.card.show_state("live", "Part downloaded", path)
 
     def IsActive(self):
-        from boardsketch_live import LIVE
+        from bevel_live import LIVE
         return LIVE.shown is not None
 
 
@@ -74,7 +74,7 @@ class Print:
         import json
         import urllib.error
         import urllib.request
-        from boardsketch_live import LIVE, SERVER
+        from bevel_live import LIVE, SERVER
         req = urllib.request.Request(f"{SERVER}/api/print?session={LIVE.shown['session']}", method="POST")
         try:
             with urllib.request.urlopen(req, timeout=60) as res:
@@ -83,13 +83,13 @@ class Print:
             LIVE.card.show_state("offline", "Could not print", json.load(e).get("detail", str(e)))
 
     def IsActive(self):
-        from boardsketch_live import LIVE
+        from bevel_live import LIVE
         return LIVE.shown is not None
 
 
-Gui.addCommand("BoardSketch_Live", Live())
-Gui.addCommand("BoardSketch_Fit", Fit())
-Gui.addCommand("BoardSketch_Focus", Focus())
-Gui.addCommand("BoardSketch_Download", Download())
-Gui.addCommand("BoardSketch_Print", Print())
-COMMANDS = ["BoardSketch_Live", "BoardSketch_Fit", "BoardSketch_Focus", "BoardSketch_Download", "BoardSketch_Print"]
+Gui.addCommand("Bevel_Live", Live())
+Gui.addCommand("Bevel_Fit", Fit())
+Gui.addCommand("Bevel_Focus", Focus())
+Gui.addCommand("Bevel_Download", Download())
+Gui.addCommand("Bevel_Print", Print())
+COMMANDS = ["Bevel_Live", "Bevel_Fit", "Bevel_Focus", "Bevel_Download", "Bevel_Print"]

@@ -13,7 +13,7 @@ CFG = Path.home() / "Library/Preferences/FreeCAD/v1-1/user.cfg"
 # group path under BaseApp/Preferences → [(type, name, value)]
 SETTINGS = {
     "General": [
-        ("FCText", "AutoloadModule", "BoardSketchWorkbench"),   # start straight in BoardSketch, not PartDesign
+        ("FCText", "AutoloadModule", "BevelWorkbench"),   # start straight in Bevel, not PartDesign
         ("FCBool", "ShowSplasher", "0"),
     ],
     "View": [
@@ -37,7 +37,7 @@ SETTINGS = {
 }
 
 # Saved window state that can leave FreeCAD with its tools missing, in every workbench: the layout and toolbar
-# and panel visibility saved while BoardSketch's focus mode had them hidden, and the overlay switch an earlier
+# and panel visibility saved while Bevel's focus mode had them hidden, and the overlay switch an earlier
 # version of this script turned off. Removing them gives FreeCAD back its own defaults.
 REPAIR = {
     ("BaseApp", "Preferences", "DockWindows"): ["ActivateOverlay"],
@@ -83,7 +83,7 @@ def main():
                 ET.SubElement(g, kind, Name=name, Value=value)
     ET.indent(tree, "  ")
     tree.write(CFG, encoding="UTF-8", xml_declaration=True)
-    print(f"FreeCAD set up for BoardSketch: {CFG}")
+    print(f"FreeCAD set up for Bevel: {CFG}")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
 #!/bin/sh
-# Opens FreeCAD straight into the BoardSketch workbench, live from the laptop server.
+# Opens FreeCAD straight into the Bevel workbench, live from the laptop server.
 # Run the server first: python3 server.py (port 8000, the same one the iPad uses)
 #
 # Every FreeCAD workbench stays available (PartDesign, Sketcher, TechDraw, ...): pick one from the workbench
-# list, or turn off Focus in the BoardSketch toolbar to see FreeCAD's own toolbars and panels.
-# On a slow machine, `sh freecad/start.sh lite` loads only what BoardSketch needs: Part (shapes and STEP),
+# list, or turn off Focus in the Bevel toolbar to see FreeCAD's own toolbars and panels.
+# On a slow machine, `sh freecad/start.sh lite` loads only what Bevel needs: Part (shapes and STEP),
 # Import, Material, Measure and Show. The other bundled workbenches are skipped with --disable-addon.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ARGS=""
