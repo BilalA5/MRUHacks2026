@@ -11,7 +11,13 @@
 # Features: extrude and revolve stand on the sketch plane. A boss stands on the top of the profile it
 # was drawn on (`on`), and a pocket is cut down into it. Holes in an extrude or revolve cut that
 # feature only; holes in a boss or pocket go down through everything under them.
+#
+# Bodies: every extrude and revolve is a part of its own, in its own material, with the bosses and pockets
+# drawn on it. An extrude drawn on another part can be layered on its top (`on`, place "top"), or set into it
+# (place "inside", from the sketch plane). Where two parts overlap, the smaller is cut out of the bigger,
+# as an insert sits in its pocket, and the bigger one is marked see-through so the part inside shows in 3D.
 import json
+import struct
 import math
 import threading
 import time
@@ -26,6 +32,20 @@ import sheetmetal
 
 PREVIEW_DEPTH = 10      # mm, for closed outlines not yet made into a part (the canvas's default depth)
 PREVIEW_MIN = 3         # mm: smaller closed outlines are Pencil taps, not shapes, and get no preview
+SEE_THROUGH = 60        # % transparency of a part with another part inside it
+
+# How each material family looks in 3D: metallic (0 or 1) and roughness (0 mirror to 1 matte), as in glTF.
+# Machining leaves metal brighter than a laser-cut or bent sheet edge.
+FINISH = {"aluminium": (1, 0.32), "stainless": (1, 0.22), "steel": (1, 0.42),
+          "acrylic": (0, 0.05), "wood": (0, 0.85), "plastic": (0, 0.55)}
+PROCESS_ROUGHNESS = {"cnc": -0.12, "laser": 0.05, "sheet": 0.08, "print": 0.1}
+
+
+def finish(material, process):
+    """{metallic, roughness} for a part's material and how it is made."""
+    metallic, rough = FINISH.get((material or {}).get("family"), (0, 0.5))
+    rough += PROCESS_ROUGHNESS.get(process, 0) if metallic else 0
+    return {"metallic": metallic, "roughness": round(min(0.95, max(0.08, rough)), 2)}
 EXTRA = 1               # mm that cutting tools run past the faces they cut, so no skin is left
 # brep is OpenCascade's own format: the fastest to write and for FreeCAD to read, so the live view uses it.
 # The others are made when someone downloads or prints the part: 3mf and stl for printers, step for CAD.
@@ -225,7 +245,7 @@ def bolt_holes(feature, bolts, a, b):
 def top(feature, by_id, seen=()):
     kind = feature["type"]
     if kind == "extrude":
-        return feature["depth"]
+        return base_z(feature, by_id, seen) + feature["depth"]
     if kind in ("boss", "pocket"):
         base = by_id.get(feature.get("on"))
         if not base or feature.get("on") in seen or base["type"] not in ("extrude", "boss"):
@@ -235,10 +255,28 @@ def top(feature, by_id, seen=()):
     raise ValueError("a revolved part has no flat top")
 
 
+# Where an extrude starts: on the sketch plane, or on the top of the part it is layered on.
+def base_z(feature, by_id, seen=()):
+    if feature.get("place") != "top" or not feature.get("on"):
+        return 0
+    base = by_id.get(feature["on"])
+    if not base or feature["on"] in seen or base["type"] not in ("extrude", "boss"):
+        raise ValueError("the part it was layered on is gone, or is not a flat extrude or boss")
+    return top(base, by_id, seen + (feature["on"],))
+
+
+# The part (body) a feature belongs to: an extrude or revolve is one; a boss or pocket joins the part it is on.
+def body_of(feature, by_id, seen=()):
+    if feature["type"] in ("boss", "pocket") and feature.get("on") in by_id and feature["on"] not in seen:
+        return body_of(by_id[feature["on"]], by_id, seen + (feature["on"],))
+    return feature.get("id") or id(feature)
+
+
 def build_feature(feature, by_id):
     """-> cache key, (solid to add or None, tools to cut from the whole part, notes)"""
     z = top(feature, by_id) if feature["type"] in ("boss", "pocket") else None
-    base_top = top(by_id[feature["on"]], by_id) if z is not None else None
+    base_top = top(by_id[feature["on"]], by_id) if z is not None \
+        else base_z(feature, by_id) if feature["type"] == "extrude" else None
     key = json.dumps([feature, base_top], sort_keys=True)   # a boss moves when the part under it changes
     if key not in feature_cache:
         notes = []
@@ -247,7 +285,7 @@ def build_feature(feature, by_id):
                 raise ValueError("its centre line was deleted")
             made = revolve(feature), []
         elif feature["type"] == "extrude":
-            made = extrude(feature, notes), []
+            made = extrude(feature, notes).translate(Vector(0, 0, base_top)), []   # layered: lifted onto the part under it
         elif feature["type"] == "boss":
             boss = round_top(prism(face(feature["profile"]), base_top, z), feature.get("edge"), z, notes)
             made = boss, hole_tools(feature["holes"], z)
@@ -281,14 +319,16 @@ def build(part):
     features, preview = part.get("features", []), False
     if not features:
         features, preview = preview_features(part), True
-    solids, tools, used, built = [], [], set(), 0
+    bodies, used, built = {}, set(), 0      # body id -> {feature, solids, tools}
     by_id = {f.get("id"): f for f in features}
     with build_lock:
         for i, feature in enumerate(features):
             try:
                 key, (solid, cuts, notes) = build_feature(feature, by_id)
-                solids += [solid] if solid else []
-                tools += cuts
+                root = body_of(feature, by_id)
+                body = bodies.setdefault(root, {"feature": by_id.get(root, feature), "solids": [], "tools": []})
+                body["solids"] += [solid] if solid else []
+                body["tools"] += cuts
                 warnings += [f"feature {i + 1} ({feature['type']}): {n}" for n in notes]
                 used.add(key)
                 built += 1
@@ -296,25 +336,78 @@ def build(part):
                 warnings.append(f"feature {i + 1} ({feature['type']} of a {feature['profile']['type']}) was skipped: {e}")
         for key in set(feature_cache) - used:
             del feature_cache[key]   # forget features that are gone from the drawing
-        if not solids:
+        parts = []
+        for body in bodies.values():
+            if body["solids"]:
+                solid = body["solids"][0].fuse(*body["solids"][1:]) if len(body["solids"]) > 1 else body["solids"][0]
+                parts.append({"feature": body["feature"], "solid": (solid.cut(*body["tools"]) if body["tools"] else solid).clean()})
+        if not parts:
             status = "error" if features else "empty"
             return None, {"status": status, "preview": preview, "features": 0, "warnings": warnings}
-        solid = solids[0].fuse(*solids[1:]) if len(solids) > 1 else solids[0]
-        solid = (solid.cut(*tools) if tools else solid).clean()
+        nest(parts, warnings)
+        solid = parts[0]["solid"] if len(parts) == 1 else cq.Compound.makeCompound([q["solid"] for q in parts])
         bb = solid.BoundingBox()
-        volume = solid.Volume()
-    # What it is made of and how: the weight, and the shop rules the checks apply
-    material = next((f["material"] for f in features if f.get("material")), None)
-    # A part with bend lines is sheet metal, whatever process was picked before it was bent
-    process = "sheet" if any(f.get("bends") for f in features) else next((f["process"] for f in features if f.get("process")), None)
+        volume = sum(q["solid"].Volume() for q in parts)
+    # What each part is made of and how: its weight and look, and the shop rules the checks apply.
+    # A part with bend lines is sheet metal, whatever process was picked before it was bent.
+    for q in parts:
+        f = q["feature"]
+        q["material"] = f.get("material")
+        q["process"] = "sheet" if f.get("bends") else f.get("process")
+    main = max(parts, key=lambda q: (q["material"] is not None, q["solid"].Volume()))
+    material = main["material"]
+    process = "sheet" if any(f.get("bends") for f in features) else main["process"] \
+        or next((f["process"] for f in features if f.get("process")), None)
+    masses = [q["solid"].Volume() / 1000 * q["material"]["density"] for q in parts if q["material"]]
     info = {"status": "ok", "preview": preview, "features": built, "warnings": warnings,
             "volume": round(volume, 1),
             "bbox": {"min": [round(bb.xmin, 2), round(bb.ymin, 2), round(bb.zmin, 2)],
                      "max": [round(bb.xmax, 2), round(bb.ymax, 2), round(bb.zmax, 2)]},
             "material": material, "process": process,
-            "mass": round(volume / 1000 * material["density"], 1) if material else None}
+            "mass": round(sum(masses), 1) if masses else None,
+            # One entry per part, in the order of the solids in the model file (a compound when there are several)
+            "bodies": [{"id": q["feature"].get("id"), "material": q["material"], "process": q["process"],
+                        "volume": round(q["solid"].Volume(), 1),
+                        "mass": round(q["solid"].Volume() / 1000 * q["material"]["density"], 1) if q["material"] else None,
+                        "seeThrough": q.get("holds", False), "finish": finish(q["material"], q["process"])} for q in parts]}
     info["checks"] = [] if preview else checks.run(features, info)
     return solid, info
+
+
+# Parts that overlap: the smaller is cut out of the bigger, which is then see-through so the inside part shows.
+def nest(parts, warnings):
+    parts.sort(key=lambda q: -q["solid"].Volume())
+    for i, outer in enumerate(parts):
+        for inner in parts[i + 1:]:
+            a, b = outer["solid"].BoundingBox(), inner["solid"].BoundingBox()
+            if a.xmin >= b.xmax or b.xmin >= a.xmax or a.ymin >= b.ymax or b.ymin >= a.ymax or a.zmin >= b.zmax or b.zmin >= a.zmax:
+                continue
+            try:
+                if outer["solid"].intersect(inner["solid"]).Volume() > 1e-3:
+                    outer["solid"] = outer["solid"].cut(inner["solid"]).clean()
+                    outer["holds"] = True
+            except Exception as e:
+                warnings.append(f"two parts overlap and could not be separated: {e}")
+
+
+# glTF's look for each part: OpenCascade writes only the colour, so the metal finish is added to the file's materials.
+def gltf_finish(path, bodies):
+    data = path.read_bytes()
+    size = struct.unpack_from("<I", data, 12)[0]
+    doc = json.loads(data[20:20 + size])
+    for m in doc.get("materials", []):
+        pbr = m.setdefault("pbrMetallicRoughness", {})
+        rgba = pbr.get("baseColorFactor", [1, 1, 1, 1])
+        linear = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4   # glTF colours are linear
+        body = min(bodies, key=lambda q: sum((linear(x) - y) ** 2 for x, y in zip(q["rgb"][:3], rgba)) + (q["rgb"][3] - rgba[3]) ** 2)
+        pbr["metallicFactor"], pbr["roughnessFactor"] = body["finish"]["metallic"], body["finish"]["roughness"]
+        if rgba[3] < 1:
+            m["alphaMode"] = "BLEND"
+    text = json.dumps(doc, separators=(",", ":")).encode()
+    text += b" " * (-len(text) % 4)
+    rest = data[20 + size:]
+    path.write_bytes(struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(text) + len(rest))
+                     + struct.pack("<I4s", len(text), b"JSON") + text + rest)
 
 
 def export(solid, folder, kinds=FORMATS, part=None, info=None):
@@ -336,10 +429,19 @@ def export(solid, folder, kinds=FORMATS, part=None, info=None):
             elif kind == "brep":
                 solid.exportBrep(str(tmp))
             elif kind == "glb":
-                # The material picked on the iPad colours the 3D file; otherwise light steel
-                material = (info or {}).get("material") or {}
-                rgb, see_through = material.get("color") or (0.55, 0.62, 0.72), material.get("transparency") or 0
-                cq.Assembly(solid, color=cq.Color(*rgb, 1 - see_through / 100)).export(str(tmp), "GLTF")
+                # Each part in the material picked on the iPad (otherwise light steel), with its metal finish;
+                # a part with another inside it is see-through
+                bodies = (info or {}).get("bodies") or [{}]
+                shapes = list(solid) if len(bodies) > 1 and isinstance(solid, cq.Compound) else [solid]
+                assembly, looks = cq.Assembly(), []
+                for i, (shape, body) in enumerate(zip(shapes, bodies)):
+                    material = body.get("material") or {}
+                    see_through = SEE_THROUGH if body.get("seeThrough") else material.get("transparency") or 0
+                    rgb = list(material.get("color") or (0.55, 0.62, 0.72))
+                    assembly.add(shape, name=f"part{i + 1}", color=cq.Color(*rgb, 1 - see_through / 100))
+                    looks.append({"rgb": rgb + [1 - see_through / 100], "finish": body.get("finish") or finish(material, None)})
+                assembly.export(str(tmp), "GLTF")
+                gltf_finish(tmp, looks)
             else:
                 cq.exporters.export(solid, str(tmp), kind.upper(), tolerance=0.05, angularTolerance=0.1)
             tmp.replace(folder / name)
