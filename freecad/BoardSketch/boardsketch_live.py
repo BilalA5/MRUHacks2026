@@ -17,6 +17,7 @@ import FreeCADGui as Gui
 from PySide import QtCore
 
 import boardsketch_overlay as overlay
+import boardsketch_theme as theme
 import boardsketch_pulse as pulse
 
 SERVER = os.environ.get("BOARDSKETCH_SERVER", "http://127.0.0.1:8000")
@@ -131,6 +132,8 @@ class Live(QtCore.QObject):
     # ---- the feed ----
 
     def tick(self):
+        self.ticks = getattr(self, "ticks", 0) + 1
+        theme.sweep(rescan=self.ticks % 10 == 1)   # overlay panels FreeCAD pops up stay hidden in focus mode
         model = None
         while True:
             try:

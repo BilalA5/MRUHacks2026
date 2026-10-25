@@ -129,6 +129,24 @@ def focus(on):
         _saved["hidden"] = []
 
 
+_overlays = []      # FreeCAD's overlay panels (such as Tasks), found by sweep
+
+
+def sweep(rescan=False):
+    """In focus mode, hides the panels FreeCAD overlays on the 3D view, such as the Tasks panel that opens
+    with a selection. They are not docks, so focus() cannot catch them as they show. Called every tick by
+    the live view; rescan looks for new overlay panels, which is slower, so it runs once a second."""
+    global _overlays
+    if not _focused:
+        return
+    if rescan or not _overlays:
+        mw = Gui.getMainWindow()
+        _overlays = [w for w in mw.findChildren(QtWidgets.QWidget) if w.metaObject().className().startswith("Gui::Overlay")]
+    for w in _overlays:
+        if w.isVisible():
+            w.hide()
+
+
 def restore():
     global _saved
     if _saved is None:
