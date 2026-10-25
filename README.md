@@ -2,7 +2,7 @@
 
 Working repo for our MRU Hacks 2026 project.
 
-![MRUHacks26 Bevel demo](docs/demo.gif)
+<picture><img src="docs/demo.gif" alt="MRUHacks26 Bevel demo"></picture>
 
 ## Current direction
 
