@@ -253,9 +253,12 @@ function dimensionElements(el, dim) {
   }));
 }
 
-// ---- Hold to snap: a pen stroke held still at its end becomes a clean line, circle, rectangle or outline. ----
+// ---- Snapping: a pen stroke becomes a clean line, arc, circle or rectangle when the Pencil lifts, ----
+// ---- and held still at its end, any straight-sided outline. ----
 const HOLD_MS = 450;    // how long the pen must stay still before lifting
 const HOLD_MOVE = 8;    // screen px the pen may drift and still count as still
+const TAP_PX = 6;       // a stroke smaller than this is a Pencil tap, not a drawing
+const JOIN_PX = 12;     // line ends this close are joined into one line
 
 // Ramer–Douglas–Peucker: the few corners that describe a hand-drawn path within eps px.
 function corners(pts, eps) {
@@ -283,21 +286,52 @@ function dropStraight(pts, maxDeg = 20) {
   return out;
 }
 
-// Returns {name, skeleton} for a line, circle, rectangle or straight-sided outline, or null.
-function recogniseStroke(pts) {
+// The circle through three points, or null when they lie in a line.
+function circleThrough(a, b, c) {
+  const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+  if (Math.abs(d) < 1e-6) return null;
+  const s = p => p.x * p.x + p.y * p.y;
+  const x = (s(a) * (b.y - c.y) + s(b) * (c.y - a.y) + s(c) * (a.y - b.y)) / d;
+  const y = (s(a) * (c.x - b.x) + s(b) * (a.x - c.x) + s(c) * (b.x - a.x)) / d;
+  return { x, y, r: Math.hypot(a.x - x, a.y - y) };
+}
+
+// An open stroke that follows a circle: its points, every 7.5° from its start. A sweep within 10° of a
+// quarter or half turn is made exactly that, as drawings use them for rounded corners and slot ends.
+function recogniseArc(pts) {
+  const c = circleThrough(pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]);
+  if (!c || c.r > 2000 || !pts.every(p => Math.abs(dist(p, c) - c.r) <= Math.max(4, 0.08 * c.r))) return null;
+  const ang = p => Math.atan2(p.y - c.y, p.x - c.x);
+  let sweep = 0;
+  for (let i = 1; i < pts.length; i++) sweep += (ang(pts[i]) - ang(pts[i - 1]) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+  const deg = Math.abs(sweep) * 180 / Math.PI, nice = Math.round(deg / 90) * 90;
+  if (deg < 25 || deg > 300) return null;
+  const turn = (nice && Math.abs(deg - nice) <= 10 ? nice : deg) * Math.PI / 180 * Math.sign(sweep);
+  const n = Math.max(6, Math.ceil(Math.abs(turn) / (Math.PI / 24))), a0 = ang(pts[0]);
+  return Array.from({ length: n + 1 }, (_, i) => ({ x: c.x + c.r * Math.cos(a0 + turn * i / n), y: c.y + c.r * Math.sin(a0 + turn * i / n) }));
+}
+
+// Returns {name, skeleton} for a line, arc, circle, rectangle or straight-sided outline, or null.
+// Straight-sided outlines are only made from a held stroke (held), as a quick sketch is often meant freehand.
+function recogniseStroke(pts, held = true) {
   const a = pts[0], b = pts[pts.length - 1];
   const { minX, maxX, minY, maxY } = bounds(pts);
   const w = maxX - minX, h = maxY - minY, size = Math.max(w, h);
   if (size < 20) return null;
   const len = dist(a, b);
-  if (len >= 0.7 * size && Math.max(...pts.map(p => segDist(p, a, b))) <= 6) {
+  // A long line is allowed more wobble: 6 px, or 2.5% of its length
+  if (len >= 0.7 * size && Math.max(...pts.map(p => segDist(p, a, b))) <= Math.max(6, 0.025 * len)) {
     return { name: "line", skeleton: { type: "line", x: a.x, y: a.y, points: [[0, 0], [b.x - a.x, b.y - a.y]] } };
   }
-  if (len > 0.25 * size) return null;
+  if (len > 0.25 * size) {
+    const arc = recogniseArc(pts);
+    return arc ? { name: "arc", skeleton: polyline(arc, false, {}) } : null;
+  }
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   if (Math.min(w, h) / Math.max(w, h) >= 0.77) {          // closer to round than 1.3 : 1
     const r = (w + h) / 4;
-    if (pts.every(p => Math.abs(dist(p, { x: cx, y: cy }) - r) <= 0.15 * r)) {
+    // A held stroke asked to be snapped, so a rougher loop still counts as a circle rather than a many-sided outline
+    if (pts.every(p => Math.abs(dist(p, { x: cx, y: cy }) - r) <= (held ? 0.25 : 0.15) * r)) {
       return { name: "circle", skeleton: { type: "ellipse", x: cx - r, y: cy - r, width: 2 * r, height: 2 * r } };
     }
   }
@@ -307,21 +341,52 @@ function recogniseStroke(pts) {
   if (w >= 20 && h >= 20 && Math.max(w, h) / Math.min(w, h) <= 4 && near / pts.length >= 0.85 && outlineCorners.length <= 4) {
     return { name: "rectangle", skeleton: { type: "rectangle", x: minX, y: minY, width: w, height: h } };
   }
-  if (outlineCorners.length >= 3 && outlineCorners.length <= 16) {
+  if (held && outlineCorners.length >= 3 && outlineCorners.length <= 16) {
     return { name: `outline with ${outlineCorners.length} sides`, skeleton: polyline(squarePath(outlineCorners, true), true, {}) };
   }
   return null;
 }
 
 // Replaces a freehand stroke with the recognised shape, keeping its colour and stroke width.
-function snapStroke(api, el, flash) {
+// held: the pen was held still at the end, so any outline may be made and a miss is reported.
+function snapStroke(api, el, flash, held) {
   const pts = el.points.map(([px, py]) => ({ x: el.x + px, y: el.y + py }));
-  const found = recogniseStroke(pts);
-  if (!found) return flash("Held stroke is not a line, circle, rectangle or straight-sided outline", "warn");
+  const others = api.getSceneElements().filter(e => e.id !== el.id);
+  const b = bounds(pts);
+  if (!held && Math.max(b.maxX - b.minX, b.maxY - b.minY) < TAP_PX) return commit(api, others);   // a tap, not a drawing
+  const found = recogniseStroke(pts, held);
+  if (!found) return held && flash("Held stroke is not a line, arc, circle, rectangle or straight-sided outline", "warn");
   const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth, strokeStyle: el.strokeStyle };
-  const replacement = convertToExcalidrawElements([{ ...found.skeleton, ...style }]);
-  commit(api, [...api.getSceneElements().filter(e => e.id !== el.id), ...replacement]);
-  flash(`Snapped to ${found.name}`);
+  const [shape] = convertToExcalidrawElements([{ ...found.skeleton, ...style }]);
+  const joined = shape.type === "line" ? joinLines([...others, shape], shape) : null;
+  commit(api, joined ? joined.elements : [...others, shape]);
+  flash(joined?.closed ? "Outline closed" : `Snapped to ${found.name}`);
+}
+
+// Joins a line to the open lines whose ends meet its ends, so an outline drawn one side at a time
+// becomes one closed outline that Profile, Hole and the 3D preview can use.
+// Returns {elements, closed} with the lines merged into this one, or null when nothing meets it.
+function joinLines(els, line) {
+  const open = el => el.type === "line" && !el.isDeleted && !isNote(el) && el.strokeStyle !== "dashed" && !outline(el).closed;
+  if (!open(line)) return null;
+  let pts = outline(line).pts;
+  const gone = new Set();
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const other of els) {
+      if (other.id === line.id || gone.has(other.id) || !open(other)) continue;
+      const q = outline(other).pts, a = pts[0], b = pts[pts.length - 1];
+      const merged = dist(b, q[0]) <= JOIN_PX ? [...pts, ...q.slice(1)]
+        : dist(b, q[q.length - 1]) <= JOIN_PX ? [...pts, ...q.slice(0, -1).reverse()]
+        : dist(a, q[q.length - 1]) <= JOIN_PX ? [...q, ...pts.slice(1)]
+        : dist(a, q[0]) <= JOIN_PX ? [...q.slice(1).reverse(), ...pts] : null;
+      if (merged) { pts = merged; gone.add(other.id); grew = true; }
+    }
+  }
+  const closed = pts.length >= 4 && dist(pts[0], pts[pts.length - 1]) <= JOIN_PX;
+  if (!gone.size && !closed) return null;
+  const joined = reshape(line, closed ? pts.slice(0, -1) : pts, closed);
+  return { elements: els.filter(e => !gone.has(e.id)).map(e => e.id === line.id ? joined : e), closed };
 }
 
 // ---- Part features ----
@@ -910,7 +975,8 @@ function App() {
   const lastHole = useRef({ kind: "through", diameter: "6" });   // a new hole starts like the last one
   const seenStrokes = useRef(new Set());   // freedraw ids already seen in onChange
   const activeStroke = useRef(null);       // the freedraw stroke being drawn now
-  const holdPending = useRef(false);       // set when a pen lifts after being still
+  const holdPending = useRef(null);        // "held" when a pen lifts after being still, "lift" otherwise
+  const [autoSnap, setAutoSnap] = useState(true);   // snap lines, arcs, circles and rectangles on lift
   const pressAt = useRef(null);            // where and when the current pen press went still
 
   // Every tool reports through here. kind is "ok" or "warn" (the tool could not run).
@@ -1134,7 +1200,7 @@ function App() {
       const p = pressAt.current;
       if (!p || p.id !== e.pointerId) return;
       pressAt.current = null;
-      if (e.type === "pointerup" && performance.now() - p.still >= HOLD_MS) holdPending.current = true;
+      if (e.type === "pointerup") holdPending.current = performance.now() - p.still >= HOLD_MS ? "held" : "lift";
     };
     const esc = e => { if (e.key === "Escape" && pickingRef.current) setPick(null); };
     root.addEventListener("pointerdown", down, true);
@@ -1161,9 +1227,10 @@ function App() {
     seenStrokes.current = new Set(strokes.map(e => e.id));
     if (fresh.length) activeStroke.current = fresh[fresh.length - 1].id;
     if (holdPending.current) {
-      holdPending.current = false;
+      const held = holdPending.current === "held";
+      holdPending.current = null;
       const el = elements.find(e => e.id === activeStroke.current && e.type === "freedraw" && !e.isDeleted);
-      if (el) snapStroke(api, el, flash);
+      if (el && (held || autoSnap)) snapStroke(api, el, flash, held);
     }
     // A line just finished: tidy it, and if Centre line was waiting, make it the centre line.
     if (api && !appState.multiElement && !appState.newElement && !appState.editingLinearElement) {
@@ -1173,7 +1240,13 @@ function App() {
       const fixed = new Map(done.map(e => [e.id, tidyLine(api, e)]).filter(([, t]) => t));
       const centre = pickingRef.current === "centre" ? done[done.length - 1] : null;
       if (centre) fixed.set(centre.id, bump({ ...(fixed.get(centre.id) || centre), strokeStyle: "dashed", strokeColor: BLUE, strokeWidth: 1 }));
-      if (fixed.size) commit(api, api.getSceneElements().map(e => fixed.get(e.id) || e));
+      let scene = api.getSceneElements().map(e => fixed.get(e.id) || e), merged = false, closedOne = false;
+      for (const d of done) {
+        const joined = d !== centre && joinLines(scene, scene.find(e => e.id === d.id));
+        if (joined) { scene = joined.elements; merged = true; closedOne ||= joined.closed; }
+      }
+      if (fixed.size || merged) commit(api, scene);
+      if (closedOne && !centre) flash("Outline closed");
       if (centre) { setPick(null); flash("Centre line added"); }
     }
   };
@@ -1340,6 +1413,10 @@ function App() {
           <button onClick={() => toggleGrid(api)} aria-pressed={gridOn} className={gridOn ? "on" : ""} title="Snap to grid">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Grid }} /><span>Grid</span>
           </button>
+          <button onClick={() => setAutoSnap(v => !v)} aria-pressed={autoSnap} className={autoSnap ? "on" : ""}
+            title="Straighten lines, arcs, circles and rectangles when the Pencil lifts">
+            <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.VectorSquare }} /><span>Snap</span>
+          </button>
           <button onClick={() => api && exportDxf(api, flash)} title="Download the drawing as DXF">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Upload }} /><span>DXF</span>
           </button>
@@ -1443,7 +1520,7 @@ function App() {
           {toast.sticky && <button type="button" onClick={() => setPick(null)}>Cancel</button>}
         </div>
       ) : empty && !dialog && (
-        <div className="eng-hint">Draw the part's outline with the Pencil. Hold still at the end of a stroke to snap it straight.</div>
+        <div className="eng-hint">Draw the part's outline with the Pencil. Lines, arcs, circles and rectangles straighten as you lift, and sides that meet join up. Hold still at the end for any straight-sided outline.</div>
       )}
     </div>
   );
