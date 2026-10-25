@@ -17,6 +17,7 @@ import cadquery as cq
 from cadquery import Vector
 
 PREVIEW_DEPTH = 10      # mm, for closed outlines not yet made into a part (the canvas's default depth)
+PREVIEW_MIN = 3         # mm: smaller closed outlines are Pencil taps, not shapes, and get no preview
 EXTRA = 1               # mm that cutting tools run past the faces they cut, so no skin is left
 FORMATS = {"stl": "model.stl", "step": "model.step", "glb": "model.glb"}
 
@@ -41,8 +42,43 @@ def outline_points(shape, n=48):
         pts = [p for i, p in enumerate(pts) if i == 0 or math.dist(p, pts[i - 1]) > 1e-3]
         if len(pts) > 1 and math.dist(pts[0], pts[-1]) <= 1e-3:
             pts.pop()
-        return pts
+        return untangle(pts)
     return None   # an open polyline encloses nothing
+
+
+def crossing(p, q, r, s):
+    """Where segment p-q crosses segment r-s, or None."""
+    d = (q[0] - p[0]) * (s[1] - r[1]) - (q[1] - p[1]) * (s[0] - r[0])
+    if abs(d) < 1e-12:
+        return None
+    t = ((r[0] - p[0]) * (s[1] - r[1]) - (r[1] - p[1]) * (s[0] - r[0])) / d
+    u = ((r[0] - p[0]) * (q[1] - p[1]) - (r[1] - p[1]) * (q[0] - p[0])) / d
+    return (p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])) if 0 < t < 1 and 0 < u < 1 else None
+
+
+def signed_area(pts):
+    return sum(p[0] * q[1] - q[0] * p[1] for p, q in zip(pts, pts[1:] + pts[:1])) / 2
+
+
+# A freehand outline often crosses itself, where the Pencil runs past its start or loops back.
+# At each crossing, split the outline in two and keep the bigger loop, until none cross.
+def untangle(pts):
+    while len(pts) > 3:
+        n, hit = len(pts), None
+        for i in range(n):
+            for j in range(i + 2, n if i else n - 1):   # skip the edges next to edge i
+                x = crossing(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n])
+                if x:
+                    hit = i, j, x
+                    break
+            if hit:
+                break
+        if not hit:
+            return pts
+        i, j, x = hit
+        inner, outer = [x] + pts[i + 1:j + 1], pts[j + 1:] + pts[:i + 1] + [x]
+        pts = max(inner, outer, key=lambda loop: abs(signed_area(loop)))
+    return pts
 
 
 def face(shape):
@@ -141,7 +177,10 @@ def build_feature(feature):
 # While nothing is marked as a part, closed outlines show as plates PREVIEW_DEPTH thick,
 # with any closed shape inside one cut through it, the same way the Profile tool reads them.
 def preview_features(part):
-    shapes = [s for s in part.get("other", []) if s.get("role") != "centre line" and outline_points(s)]
+    def big_enough(s):
+        pts = outline_points(s)
+        return pts and max(max(p[i] for p in pts) - min(p[i] for p in pts) for i in (0, 1)) >= PREVIEW_MIN
+    shapes = [s for s in part.get("other", []) if s.get("role") != "centre line" and big_enough(s)]
     outlines = {id(s): outline_points(s) for s in shapes}
     def within(s, t):
         return s is not t and all(inside(p, outlines[id(t)]) for p in outlines[id(s)])
