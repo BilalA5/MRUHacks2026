@@ -52,6 +52,19 @@ VIEW_SETTINGS = {
 _saved = None
 _focused = False    # focus mode is on
 _watched = set()    # panels already set to hide again when FreeCAD shows them
+_closing = None     # watches FreeCAD's window for quitting
+
+
+class _BeforeQuit(QtCore.QObject):
+    """FreeCAD saves which toolbars and panels are showing when it quits, and starts with them that way next
+    time, in every workbench. Focus mode is undone just before, so FreeCAD never remembers its tools as hidden.
+    If the quit is cancelled (say, at the save prompt), the BoardSketch look comes back."""
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Close and _saved is not None:
+            restore()
+            QtCore.QTimer.singleShot(0, lambda: obj.isVisible() and Gui.activeWorkbench().name() == "BoardSketchWorkbench" and apply())
+        return False
 
 
 def _param(kind, group, name, value=None):
@@ -63,10 +76,13 @@ def _param(kind, group, name, value=None):
 
 def apply():
     """Dark theme and focus mode on; remembers what it changed so restore() can put it back."""
-    global _saved
+    global _saved, _closing
     if _saved is not None:
         return
     mw = Gui.getMainWindow()
+    if _closing is None:
+        _closing = _BeforeQuit(mw)
+        mw.installEventFilter(_closing)
     group = App.ParamGet(VIEW)
     _saved = {
         "qss": mw.styleSheet(),
@@ -82,6 +98,8 @@ def apply():
 def focus(on):
     """Focus mode: only the BoardSketch toolbar and the 3D view; panels, other toolbars and tabs are hidden."""
     global _focused
+    if _saved is None:
+        return          # the BoardSketch look is off, so nothing is hidden or to show again
     _focused = on
     mw = Gui.getMainWindow()
     if on:

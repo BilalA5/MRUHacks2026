@@ -23,8 +23,11 @@ A pulsing border runs round the 3D view while a drawing change is being turned i
 
 - Install once, with FreeCAD closed: `sh freecad/install.sh`. It links the workbench into FreeCAD and sets
   FreeCAD's preferences for a light, fast screen (no anti-aliasing, navigation cube, autosave or splash).
-- Run, with the server up: `sh freecad/start.sh`. Only the modules BoardSketch needs are loaded; every other
-  bundled workbench is skipped with `--disable-addon`.
+  Run it again if FreeCAD ever opens with its toolbars or panels missing: it clears the saved layout so
+  FreeCAD starts with its own defaults.
+- Run, with the server up: `sh freecad/start.sh`. Every FreeCAD workbench stays available; Focus in the
+  BoardSketch toolbar hides or shows FreeCAD's own toolbars and panels. `sh freecad/start.sh lite` loads
+  only the modules BoardSketch needs, for a slow machine.
 
 ## Open items
 
