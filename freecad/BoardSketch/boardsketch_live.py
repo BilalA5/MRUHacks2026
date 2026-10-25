@@ -18,7 +18,6 @@ from PySide import QtCore
 
 import boardsketch_overlay as overlay
 import boardsketch_pulse as pulse
-import boardsketch_theme as theme
 
 SERVER = os.environ.get("BOARDSKETCH_SERVER", "http://127.0.0.1:8000")
 DOC = "BoardSketch"
@@ -126,9 +125,6 @@ class Live(QtCore.QObject):
     # ---- the feed ----
 
     def tick(self):
-        self.ticks = getattr(self, "ticks", 0) + 1
-        if self.ticks % 10 == 0:
-            theme.sweep()          # once a second: panels FreeCAD popped up stay hidden in focus mode
         model = None
         while True:
             try:
@@ -255,24 +251,16 @@ class Live(QtCore.QObject):
         self.describe(info)
 
     def describe(self, info):
-        """The readout: the part's size as the title; below it what it is made of and weighs, and what a shop would flag."""
         lo, hi = info["bbox"]["min"], info["bbox"]["max"]
-        title = " × ".join(f"{b - a:.1f}".rstrip("0").rstrip(".") for a, b in zip(lo, hi)) + " mm"
-        lines = []
-        if info.get("preview"):
-            lines.append("Preview. Mark a profile on the iPad to make it a part")
-        elif info.get("material"):
-            lines.append(f"{info['material']['name']} · {info['mass']:g} g")
-        else:
-            lines.append(f"{info.get('volume', 0) / 1000:.2f} cm³ · no material set")
-        checks = info.get("checks") or []
-        if checks:
-            lines.append(f"{len(checks)} check{'s' if len(checks) != 1 else ''}: {checks[0]['message']}")
-        elif info.get("warnings"):
-            lines.append(info["warnings"][0])
+        size = " × ".join(f"{b - a:.1f}" for a, b in zip(lo, hi)) + " mm"
+        n = info.get("features", 0)
+        detail = f"{size} · {info.get('volume', 0) / 1000:.2f} cm³ · {n} feature{'s' if n != 1 else ''}"
         if self.last_build:
-            lines.append(f"Sent to AI · {self.last_build}")
-        self.card.show_state("drawing" if info.get("preview") else "live", title, "\n".join(lines))
+            detail += f" · AI has {self.last_build}"
+        if info.get("warnings"):
+            detail += f"\n{info['warnings'][0]}"
+        title = "Preview: mark a profile to make it a part" if info.get("preview") else "Part, live from the iPad"
+        self.card.show_state("live", title, detail)
 
 
 def style(obj, preview=False):

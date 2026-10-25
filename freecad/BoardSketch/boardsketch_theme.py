@@ -111,20 +111,6 @@ def focus(on):
         _saved["hidden"] = []
 
 
-def sweep():
-    """In focus mode, hides any panel FreeCAD shows later: a dock, or a panel overlaid on the 3D view,
-    such as the Tasks panel that opens with a selection."""
-    if not _focused:
-        return
-    mw = Gui.getMainWindow()
-    for w in mw.findChildren(QtWidgets.QDockWidget):
-        if w.isVisible():
-            w.hide()
-    for w in mw.findChildren(QtWidgets.QWidget):
-        if w.isVisible() and w.metaObject().className().startswith("Gui::Overlay"):
-            w.hide()
-
-
 def restore():
     global _saved
     if _saved is None:

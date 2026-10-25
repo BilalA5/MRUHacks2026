@@ -259,9 +259,8 @@ function dimensionElements(el, dim) {
   }));
 }
 
-// ---- Shape detection: a pen stroke held still at its end becomes the clean shape it was drawn as ----
-// ---- (line, arc, circle, ellipse, rectangle, triangle or straight-sided outline). A stroke that is ----
-// ---- not held stays exactly as drawn, like Notes on the iPad. ----
+// ---- Snapping: a pen stroke becomes a clean line, arc, circle or rectangle when the Pencil lifts, ----
+// ---- and held still at its end, also an ellipse, a triangle or any straight-sided outline. ----
 const HOLD_MS = 450;    // how long the pen must stay still before lifting
 const HOLD_MOVE = 8;    // screen px the pen may drift and still count as still
 const TAP_PX = 6;       // a stroke smaller than this is a Pencil tap, not a drawing
@@ -318,7 +317,9 @@ function recogniseArc(pts) {
   return Array.from({ length: n + 1 }, (_, i) => ({ x: c.x + c.r * Math.cos(a0 + turn * i / n), y: c.y + c.r * Math.sin(a0 + turn * i / n) }));
 }
 
-// Returns {name, skeleton} for a line, arc, circle, ellipse, rectangle, triangle or straight-sided outline, or null.
+// Returns {name, skeleton} for a line, arc, circle, rectangle, ellipse, triangle or straight-sided outline, or null.
+// Ellipses, triangles and other straight-sided outlines are only made from a held stroke (held), as a quick
+// sketch is often meant freehand.
 function recogniseStroke(pts, held = true) {
   const a = pts[0], b = pts[pts.length - 1];
   const { minX, maxX, minY, maxY } = bounds(pts);
@@ -349,11 +350,11 @@ function recogniseStroke(pts, held = true) {
   }
   // An oval: every point near the ellipse that fills the stroke's box
   const rx = w / 2, ry = h / 2;
-  if (rx > 10 && ry > 10 && outlineCorners.length > 4
+  if (held && rx > 10 && ry > 10 && outlineCorners.length > 4
     && pts.every(p => Math.abs(Math.hypot((p.x - cx) / rx, (p.y - cy) / ry) - 1) <= 0.18)) {
     return { name: "ellipse", skeleton: { type: "ellipse", x: minX, y: minY, width: w, height: h } };
   }
-  if (outlineCorners.length === 3) {
+  if (held && outlineCorners.length === 3) {
     return { name: "triangle", skeleton: polyline(squarePath(outlineCorners, true), true, {}) };
   }
   if (held && outlineCorners.length >= 4 && outlineCorners.length <= 16) {
@@ -370,14 +371,13 @@ function snapStroke(api, el, flash, held) {
   const others = api.getSceneElements().filter(e => e.id !== el.id);
   const b = bounds(pts);
   if (!held && Math.max(b.maxX - b.minX, b.maxY - b.minY) < TAP_PX) return commit(api, others);   // a tap, not a drawing
-  if (!held) return;                                                    // not held: it stays as drawn
   const found = recogniseStroke(pts, held);
-  if (!found) return held && flash("Couldn't tell which shape that is. It stays as drawn", "warn");
+  if (!found) return held && flash("Held stroke is not a line, arc, circle, ellipse, rectangle, triangle or straight-sided outline", "warn");
   const style = { strokeColor: el.strokeColor, strokeWidth: el.strokeWidth, strokeStyle: el.strokeStyle };
   const [shape] = convertToExcalidrawElements([{ ...found.skeleton, ...style }]);
   const joined = shape.type === "line" ? joinLines([...others, shape], shape) : null;
   commit(api, joined ? joined.elements : [...others, shape]);
-  flash(joined?.closed ? "Outline closed" : `Made a ${found.name}`);
+  flash(joined?.closed ? "Outline closed" : `Snapped to ${found.name}`);
 }
 
 // Joins a line to the open lines whose ends meet its ends, so an outline drawn one side at a time
@@ -1150,6 +1150,7 @@ function App() {
   const [picking, setPicking] = useState(null);   // the tool waiting for a tap: "dim", "hole" or "pattern"
   const pickingRef = useRef(null);
   const lastHole = useRef({ kind: "through", diameter: "6" });   // a new hole starts like the last one
+  const [autoSnap, setAutoSnap] = useState(true);   // snap lines, arcs, circles and rectangles on lift
   const lastPart = useRef({ material: "al6061" });                 // a new part starts in the last material
   const seen = useRef(new Map());                                  // where each shape was, so its notes can follow it
   const [made, setMade] = useState(null);                          // the laptop's latest build: weight and checks
@@ -1462,7 +1463,7 @@ function App() {
       const held = holdPending.current === "held";
       holdPending.current = null;
       const el = elements.find(e => e.id === activeStroke.current && e.type === "freedraw" && !e.isDeleted);
-      if (el) snapStroke(api, el, flash, held);   // held: make it a clean shape; lifted: only a tap is cleared
+      if (el && (held || autoSnap)) snapStroke(api, el, flash, held);
     }
     // A line just finished: tidy it, and if Centre line was waiting, make it the centre line.
     if (api && !appState.multiElement && !appState.newElement && !appState.editingLinearElement) {
@@ -1730,6 +1731,10 @@ function App() {
         <div className="eng-sheet">
           <button onClick={() => toggleGrid(api)} aria-pressed={gridOn} className={gridOn ? "on" : ""} title="Snap to grid">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Grid }} /><span>Grid</span>
+          </button>
+          <button onClick={() => setAutoSnap(v => !v)} aria-pressed={autoSnap} className={autoSnap ? "on" : ""}
+            title="Straighten lines, arcs, circles and rectangles when the Pencil lifts">
+            <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.VectorSquare }} /><span>Snap</span>
           </button>
           <button onClick={() => setDialog({ type: "print", format: "stl" })} title="Download the 3D part, or print it">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Squares }} /><span>3D file</span>
