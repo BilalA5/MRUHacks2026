@@ -5,7 +5,6 @@
 // only the newest unsent snapshot and retries it until the laptop acks it, so a dropped, repeated or
 // late message never matters: the next one replaces it completely.
 import { exportToBlob } from "@excalidraw/excalidraw";
-import { api } from "./api.js";
 
 const QUIET_MS = 250;         // send this long after the last change...
 const MAX_WAIT_MS = 1000;     // ...but never later than this while the user keeps drawing
@@ -27,7 +26,7 @@ const blobToDataUrl = blob => new Promise((resolve, reject) => {
 async function post(path, body) {
   let res;
   try {
-    res = await fetch(api(path), { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body });
   } catch {
     throw Object.assign(new Error("Laptop not answering"), { retry: true });
   }
@@ -221,7 +220,7 @@ export function createBridge({ api, partOf, ready, onStatus, onBuildError }) {
   (async function checkHealth() {
     for (let i = 0; !stopped && !reachable; i++) {
       try {
-        const res = await fetch(api("/api/health"));
+        const res = await fetch("/api/health");
         if (res.ok) { reachable = true; status(); return; }
       } catch {}
       status();

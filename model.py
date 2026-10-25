@@ -463,14 +463,11 @@ def sketch_lines(part):
 # ---- Live builds from the stream ----
 
 class LiveBuilder:
-    """Builds each session's newest snapshot in the background and reports each result through on_model(info).
-    Every session has its own waiting slot, so people drawing at the same time never replace each other's work;
-    sessions take turns, oldest waiting first."""
+    """Builds the newest snapshot in the background and reports each result through on_model(info)."""
 
     def __init__(self, session_dir, on_model):
         self.session_dir, self.on_model = session_dir, on_model
-        self.pending, self.built = {}, {}        # pending: session -> its newest unbuilt snapshot (oldest first)
-                                                 # built: session -> part JSON of its current model
+        self.pending, self.built = None, {}      # built: session -> part JSON of its current model
         self.latest = {}                         # session -> info of its current model
         self.solids = {}                         # session -> (seq, its current solid or None)
         self.parts = {}                          # session -> (part, info) the current solid was built from
@@ -492,17 +489,15 @@ class LiveBuilder:
 
     def submit(self, snap):
         with self.wake:
-            # Replaces this session's older snapshot still waiting, keeping its place in the queue;
-            # a session with nothing waiting joins the back
-            self.pending[snap["session"]] = snap
+            self.pending = snap    # replaces any older snapshot still waiting
             self.wake.notify()
 
     def run(self):
         while True:
             with self.wake:
-                while not self.pending:
+                while self.pending is None:
                     self.wake.wait()
-                snap = self.pending.pop(next(iter(self.pending)))
+                snap, self.pending = self.pending, None
             try:
                 self.build_snapshot(snap)
             except Exception as e:

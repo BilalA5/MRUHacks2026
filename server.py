@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,13 +21,10 @@ WEB_DIR = ROOT / "web"
 SESSION_DIR = ROOT / "sessions"
 
 app = FastAPI()
-# The canvas can also be served from elsewhere (the web demo on Vercel) and reach this server through a tunnel
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-                   expose_headers=["Content-Disposition"])
 
 latest = {}          # session -> its newest snapshot
 newest = None        # the session that sent most recently
-listeners = {}       # one queue per open /api/stream -> the session it follows, or None for all
+listeners = set()    # one queue per open /api/stream
 loop = None          # the server's event loop, so the model worker can publish to it
 
 
@@ -82,9 +78,8 @@ async def read_payload(request):
 
 
 def publish(event, data):
-    for queue, session in list(listeners.items()):
-        if session in (None, data.get("session")):
-            queue.put_nowait((event, data))
+    for queue in listeners:
+        queue.put_nowait((event, data))
 
 
 @app.get("/api/health")
@@ -211,14 +206,13 @@ def print_model(session: str | None = None):
 
 # Server-Sent Events: the current snapshot and model first, then every new snapshot, model and build
 @app.get("/api/stream")
-async def stream(session: str | None = None):
-    # ?session=<id> follows one drawing (the web page's own); without it, every drawing (the laptop's FreeCAD)
-    queue, first = asyncio.Queue(), session or newest
-    if first in latest:
-        queue.put_nowait(("scene", latest[first]))
-    if first in builder.latest:
-        queue.put_nowait(("model", builder.latest[first]))
-    listeners[queue] = session
+async def stream():
+    queue = asyncio.Queue()
+    if newest:
+        queue.put_nowait(("scene", latest[newest]))
+    if newest in builder.latest:
+        queue.put_nowait(("model", builder.latest[newest]))
+    listeners.add(queue)
 
     async def events():
         try:
@@ -230,7 +224,7 @@ async def stream(session: str | None = None):
                     continue
                 yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
         finally:
-            listeners.pop(queue, None)
+            listeners.discard(queue)
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 

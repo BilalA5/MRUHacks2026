@@ -3,7 +3,6 @@
 // and partSketch(), the clean mm description of the part that the laptop builds from.
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { createPortal } from "react-dom";
 import {
   Excalidraw, CaptureUpdateAction, viewportCoordsToSceneCoords,
   convertToExcalidrawElements as toElements,
@@ -11,8 +10,6 @@ import {
 import "@excalidraw/excalidraw/index.css";
 import { ICONS } from "./icons.js";
 import { createBridge } from "./bridge.js";
-import { api as server, REMOTE } from "./api.js";
-import { createViewer } from "./viewer.js";
 
 const PAPER = "#FBFBF7";        // drawing paper
 const INK = "#1F2A36";          // graphite lines
@@ -1183,33 +1180,6 @@ const Seg = ({ label, options, value, onChange }) => (
   </div>
 );
 
-// The 3D preview: the laptop's model of this drawing, live, in a panel beside the canvas (see viewer.js).
-// It lives outside the board, so the board's finger and pen handling never sees its touches.
-function Preview({ session, onClose }) {
-  const host = useRef(null), viewer = useRef(null);
-  const [info, setInfo] = useState(null);
-  useEffect(() => {
-    viewer.current = createViewer(host.current, session, setInfo);
-    return () => viewer.current.dispose();
-  }, []);
-  const size = i => i.bbox.max.map((b, k) => fmt(b - i.bbox.min[k])).join(" × ") + " mm";
-  const status = !info ? "Waiting for the laptop"
-    : info.status === "offline" ? "Laptop not answering"
-    : info.status === "empty" ? "Draw a closed outline to see it in 3D"
-    : info.status === "error" ? info.warnings?.[0] || "Could not build the part"
-    : `${info.preview ? "Preview · " : ""}${size(info)}` + (info.mass != null ? ` · ${fmt(info.mass)} g` : "");
-  return createPortal(
-    <section className="eng-3d" aria-label="3D preview">
-      <header>
-        <strong>3D</strong>
-        <span title={status}>{status}</span>
-        <button type="button" onClick={() => viewer.current?.refit()}>Fit</button>
-        <button type="button" onClick={onClose} aria-label="Close the 3D preview">✕</button>
-      </header>
-      <div className="eng-3d-view" ref={host} />
-    </section>, document.body);
-}
-
 function App() {
   const [api, setApi] = useState(null);
   const [gridOn, setGridOn] = useState(true);
@@ -1225,8 +1195,7 @@ function App() {
   const [autoSnap, setAutoSnap] = useState(true);   // snap lines, arcs, circles and rectangles on lift
   const lastPart = useRef({ material: "al6061" });                 // a new part starts in the last material
   const seen = useRef(new Map());                                  // where each shape was, so its notes can follow it
-  const [made, setMade] = useState(null);
-  const [preview, setPreview] = useState(REMOTE);   // the 3D panel: open by itself on the web demo, which has no FreeCAD                          // the laptop's latest build: weight and checks
+  const [made, setMade] = useState(null);                          // the laptop's latest build: weight and checks
   const seenStrokes = useRef(new Set());   // freedraw ids already seen in onChange
   const activeStroke = useRef(null);       // the freedraw stroke being drawn now
   const holdPending = useRef(null);        // "held" when a pen lifts after being still, "lift" otherwise
@@ -1713,7 +1682,7 @@ function App() {
   useEffect(() => {
     if (link.state !== "live" || !bridgeRef.current) return;
     const read = async () => {
-      const res = await fetch(server(`/api/model/info?session=${bridgeRef.current.session}`)).catch(() => null);
+      const res = await fetch(`/api/model/info?session=${bridgeRef.current.session}`).catch(() => null);
       if (res?.ok) setMade(await res.json());
       else if (res?.status === 404) setMade(null);
     };
@@ -1734,7 +1703,7 @@ function App() {
   // 3D file: download the live 3D model the laptop built from this drawing, or open it in the laptop's slicer.
   const modelOf = async () => {
     bridgeRef.current?.flush();
-    const res = await fetch(server(`/api/model/info?session=${bridgeRef.current?.session}`)).catch(() => null);
+    const res = await fetch(`/api/model/info?session=${bridgeRef.current?.session}`).catch(() => null);
     const info = res?.ok ? await res.json() : null;
     return info?.status === "ok" ? info : null;
   };
@@ -1742,12 +1711,12 @@ function App() {
     const format = dialog.format;
     if (!(await modelOf())) return flash("No 3D part yet. Draw a closed outline first", "warn");
     if (format === "svg") {   // the shop drawing opens in its own tab, to look at or print
-      window.open(server(`/api/model?session=${bridgeRef.current.session}&format=svg`), "_blank");
+      window.open(`/api/model?session=${bridgeRef.current.session}&format=svg`, "_blank");
       setDialog(null);
       return flash("Shop drawing opened");
     }
     const a = document.createElement("a");
-    a.href = server(`/api/model?session=${bridgeRef.current.session}&format=${format}&download=1`);
+    a.href = `/api/model?session=${bridgeRef.current.session}&format=${format}&download=1`;
     a.download = "";
     document.body.appendChild(a); a.click(); a.remove();
     setDialog(null);
@@ -1755,7 +1724,7 @@ function App() {
   };
   const printModel = async () => {
     if (!(await modelOf())) return flash("No 3D part yet. Draw a closed outline first", "warn");
-    const res = await fetch(server(`/api/print?session=${bridgeRef.current.session}`), { method: "POST" }).catch(() => null);
+    const res = await fetch(`/api/print?session=${bridgeRef.current.session}`, { method: "POST" }).catch(() => null);
     const body = res ? await res.json().catch(() => ({})) : {};
     setDialog(null);
     if (res?.ok) flash(`Opened in ${body.slicer} on the laptop. Slice it there and print`);
@@ -1770,7 +1739,6 @@ function App() {
 
   return (
     <div className="board">
-      {preview && <Preview session={() => bridgeRef.current?.session} onClose={() => setPreview(false)} />}
       <Excalidraw
         excalidrawAPI={setApi}
         initialData={{
@@ -1815,9 +1783,6 @@ function App() {
           </button>
           <button onClick={() => setDialog({ type: "print", format: "stl" })} title="Download the 3D part, or print it">
             <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Squares }} /><span>3D file</span>
-          </button>
-          <button onClick={() => setPreview(v => !v)} aria-pressed={preview} className={preview ? "on" : ""} title="Show the part in 3D beside the drawing">
-            <span className="ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS.Layers }} /><span>3D</span>
           </button>
         </div>
         {/* The laptop's side, on one line: whether it has the drawing, and what the part weighs.

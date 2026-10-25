@@ -4,7 +4,7 @@
   "description": "Drawing board: Excalidraw (MIT) with a Send button to the laptop server.",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild web/src/app.jsx --bundle --outdir=web/dist --entry-names=app --asset-names='fonts/[name]-[hash]' --loader:.js=jsx --loader:.jsx=jsx --loader:.css=css --loader:.woff2=file --loader:.woff=file --loader:.ttf=file --loader:.svg=file --loader:.png=file --conditions=production --define:process.env.NODE_ENV='\"production\"' --define:process.env.API_BASE=\"\\\"$API_BASE\\\"\" --minify"
+    "build": "esbuild web/src/app.jsx --bundle --outdir=web/dist --entry-names=app --asset-names='fonts/[name]-[hash]' --loader:.js=jsx --loader:.jsx=jsx --loader:.css=css --loader:.woff2=file --loader:.woff=file --loader:.ttf=file --loader:.svg=file --loader:.png=file --conditions=production --define:process.env.NODE_ENV='\"production\"' --minify"
   },
   "repository": {
     "type": "git",
@@ -20,8 +20,7 @@
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "three": "0.170.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "esbuild": "^0.24.0"
