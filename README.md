@@ -43,6 +43,22 @@ A pulsing border runs round the 3D view while a drawing change is being turned i
 3. Start the server: `python3 server.py`. It serves the canvas at `http://<laptop address>:8000` (`ipconfig getifaddr en0`).
 4. Start the laptop screen: `sh freecad/start.sh`.
 
+## Web demo (Vercel)
+
+The canvas can be put on the web so anyone can draw a part and watch it built in 3D, with this laptop doing the
+CadQuery work. Vercel hosts only the canvas (`web/`); the server stays on the laptop and is reached through a free
+Cloudflare quick tunnel. The page opens a **3D** panel beside the drawing (three.js, `web/src/viewer.js`), which
+shows that visitor's own part; FreeCAD on the laptop shows whoever drew last.
+
+1. Once: `brew install cloudflared`, `npm install -g vercel`, `vercel login`.
+2. `python3 server.py`, then in another terminal `sh tools/web_demo.sh`. It opens the tunnel, deploys, and prints
+   the link. Keep it running; the demo works only while the laptop, the server and the script are on.
+3. The tunnel gets a new address each run. The script redeploys with it; or open the last deployment with
+   `?api=<tunnel address>` added to its link.
+
+Quick tunnels don't pass live streams through, so the web panel checks `/api/model/info` every 0.7 s instead of
+following `/api/stream`. A tunnel allows 200 requests at a time, which is plenty for a demo room.
+
 ## Live 3D model (laptop backend)
 
 `model.py` turns the canvas's part description (`partSketch()`, in mm) into a CadQuery solid while the user draws. No AI call is needed for this: extrudes, revolves, through/blind/counterbore/countersink holes, drawn cut-outs, hole patterns and bolt circles all come straight from the drawing. Until a profile is marked, closed outlines show as a 10 mm preview plate.

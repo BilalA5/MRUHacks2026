@@ -1,0 +1,9 @@
+# Vercel only hosts the canvas (web/). The CadQuery server stays on the laptop, reached through a tunnel,
+# so the Python files are left out: otherwise Vercel would try to run server.py as a function.
+*.py
+requirements.txt
+freecad/
+tools/
+sessions/
+sketches/
+*.pdf
