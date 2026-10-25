@@ -470,7 +470,7 @@ function applyPart(api, plan, feature, flash) {
   }));
   const marked = el => {
     if (outerFeature.has(el.id)) {
-      return bump({ ...el, groupIds: [groups.get(el.id)], backgroundColor: FILLS[feature.feature] || PART_FILL, fillStyle: "solid",
+      return bump({ ...el, groupIds: [groups.get(el.id)], backgroundColor: FILLS[feature.feature] || MATERIALS[feature.material]?.tint || PART_FILL, fillStyle: "solid",
         customData: { ...(el.customData || {}), part: outerFeature.get(el.id) } });
     }
     // A hole keeps its Hole-tool spec and its own group inside the part's group.
@@ -588,18 +588,26 @@ const FASTENERS = {
   M12: { clear: 13.5, tap: 10.2, pitch: 1.75, cb: 20, cbDepth: 13, csk: 27.2 },
 };
 
-// Materials a part can be made from: density (g/cm³) for its weight, family for the shop's rules,
-// and the plate or sheet thicknesses suppliers stock (mm), offered as one-tap depths.
+// Materials a part can be made from: density (g/cm³) for its weight, family for the shop's rules, the plate or
+// sheet thicknesses suppliers stock (mm), offered as one-tap depths, and how it looks: tint fills the part on the
+// canvas, color (0-1 RGB) and transparency (%) colour the 3D part on the laptop and in the downloaded files.
 const MATERIALS = {
-  al6061: { name: "Aluminium 6061", density: 2.7, family: "aluminium", stock: [1.5, 2, 3, 4, 5, 6, 8, 10, 12] },
-  steel: { name: "Mild steel", density: 7.85, family: "steel", stock: [1, 1.5, 2, 3, 4, 5, 6, 8, 10] },
-  ss304: { name: "Stainless 304", density: 8, family: "stainless", stock: [1, 1.5, 2, 3, 4, 5, 6] },
-  acrylic: { name: "Acrylic", density: 1.19, family: "acrylic", stock: [2, 3, 4, 5, 6, 8, 10] },
-  plywood: { name: "Birch plywood", density: 0.68, family: "wood", stock: [3, 4, 6, 9, 12, 18] },
-  pla: { name: "PLA (3D print)", density: 1.24, family: "plastic", stock: [] },
+  al6061: { name: "Aluminium 6061", density: 2.7, family: "aluminium", stock: [1.5, 2, 3, 4, 5, 6, 8, 10, 12],
+    tint: "#E2E7EE", color: [0.8, 0.82, 0.85], transparency: 0 },
+  steel: { name: "Mild steel", density: 7.85, family: "steel", stock: [1, 1.5, 2, 3, 4, 5, 6, 8, 10],
+    tint: "#D3D9E1", color: [0.5, 0.53, 0.57], transparency: 0 },
+  ss304: { name: "Stainless 304", density: 8, family: "stainless", stock: [1, 1.5, 2, 3, 4, 5, 6],
+    tint: "#E5E8EC", color: [0.7, 0.72, 0.75], transparency: 0 },
+  acrylic: { name: "Acrylic", density: 1.19, family: "acrylic", stock: [2, 3, 4, 5, 6, 8, 10],
+    tint: "#DCF0F8", color: [0.68, 0.87, 0.96], transparency: 55 },
+  plywood: { name: "Birch plywood", density: 0.68, family: "wood", stock: [3, 4, 6, 9, 12, 18],
+    tint: "#F2E4CE", color: [0.86, 0.72, 0.52], transparency: 0 },
+  pla: { name: "PLA (3D print)", density: 1.24, family: "plastic", stock: [],
+    tint: "#FCE4D4", color: [0.95, 0.52, 0.2], transparency: 0 },
 };
 const PROCESSES = { cnc: "CNC mill", laser: "Laser / waterjet", sheet: "Sheet metal", print: "3D print" };
-const materialOf = key => MATERIALS[key] && (({ name, density, family }) => ({ name, density, family }))(MATERIALS[key]);
+const materialOf = key => MATERIALS[key]
+  && (({ name, density, family, color, transparency }) => ({ name, density, family, color, transparency }))(MATERIALS[key]);
 
 // A spur gear's outline in mm round (0, 0): involute flanks at a 20° pressure angle, addendum m and
 // dedendum 1.25 m (ISO 53). The root between teeth is a straight chord, fine for cut and printed gears.
@@ -643,6 +651,8 @@ function holeProblem(box, depth, spec) {
   if (spec.kind === "tapped" && spec.depth && depth && spec.depth >= depth) return `Deeper than the part (${fmt(depth)} mm). Leave thread depth empty for through`;
   if (!(spec.diameter > 0)) return "Enter a diameter above 0 mm";
   if (!Number.isFinite(spec.x) || !Number.isFinite(spec.y)) return "Enter where the hole goes";
+  if (spec.fastener && spec.kind === "counterbore" && depth && spec.cbDepth >= depth)
+    return `An ${spec.fastener} counterbore is ${fmt(spec.cbDepth)} mm deep, more than this ${fmt(depth)} mm part. Use C'sink, or a thicker part`;
   if (spec.kind === "blind" && !(spec.depth > 0)) return "Enter a depth above 0 mm";
   if (spec.kind === "blind" && depth && spec.depth >= depth) return `Deeper than the part (${fmt(depth)} mm). Choose Through`;
   if (spec.kind === "counterbore" && !(spec.cbDiameter > spec.diameter)) return "The counterbore must be wider than the hole";
@@ -1016,17 +1026,28 @@ function writeBend(api, line, bend) {
 function noteOwner(el, dimGroups) {
   return el.customData?.dim?.target || el.customData?.of || (el.customData?.note === "dim" ? dimGroups.get(el.groupIds[0]) : null);
 }
-const shapeKey = el => JSON.stringify([el.width, el.height, el.angle, el.points]);
+// Moving a shape changes only x and y; reshaping it changes its size, turn or points.
+const shapeKey = el => `${el.width}|${el.height}|${el.angle}|${el.points ? el.points.length + "|" + el.points[el.points.length - 1] : ""}`;
 
 function followNotes(api, elements, seen) {
+  // Fast path, run on every change: anything whose version is unchanged is skipped without a look.
+  let changed = false;
+  for (const el of elements) {
+    const was = seen.get(el.id);
+    if (!was || was.v !== el.version) { changed = true; break; }
+  }
+  if (!changed && seen.size === elements.length) return;
   const els = elements.filter(e => !e.isDeleted);
   const dimGroups = new Map(els.filter(e => e.customData?.dim).map(e => [e.groupIds[0], e.customData.dim.target]));
   const byId = new Map(els.map(e => [e.id, e]));
+  // Only shapes that have notes or holes matter; a plain stroke being drawn is left alone.
+  const owners = new Set(els.map(e => isNote(e) ? noteOwner(e, dimGroups) : holeOf(e)?.of).filter(Boolean));
+  const dimmed = new Set(els.filter(e => e.customData?.dim).map(e => e.customData.dim.target));
   const moves = new Map(), redraw = new Set();
   for (const el of els) {
     const was = seen.get(el.id);
-    if (!was || isNote(el)) continue;
-    if (was.key !== shapeKey(el)) redraw.add(el.id);
+    if (!was || was.v === el.version || isNote(el) || !owners.has(el.id)) continue;
+    if (was.key !== shapeKey(el)) { if (dimmed.has(el.id)) redraw.add(el.id); }
     else if (was.x !== el.x || was.y !== el.y) moves.set(el.id, { dx: el.x - was.x, dy: el.y - was.y });
   }
   // A hole follows its profile, and a hole's notes follow the hole, so a delta is found up that chain.
@@ -1053,7 +1074,7 @@ function followNotes(api, elements, seen) {
     api.updateScene({ elements: out, captureUpdate: CaptureUpdateAction.EVENTUALLY });   // part of the same undo step as the move
   }
   seen.clear();
-  for (const el of next || elements) if (!el.isDeleted) seen.set(el.id, { x: el.x, y: el.y, key: shapeKey(el) });
+  for (const el of next || elements) seen.set(el.id, { v: el.version, x: el.x, y: el.y, key: shapeKey(el) });
 }
 
 function writeCorners(api, el, corners) {
@@ -1451,7 +1472,7 @@ function App() {
 
   // Every board change: remember the newest pen stroke, and snap it if it was held still.
   const handleChange = (elements, appState) => {
-    if (api) followNotes(api, elements, seen.current);
+    if (api && !appState.newElement && !appState.multiElement) followNotes(api, elements, seen.current);   // not mid-stroke
     bridgeRef.current?.changed(elements);
     setGridOn(!!appState.gridModeEnabled);
     setEmpty(!elements.some(e => !e.isDeleted));
@@ -1747,10 +1768,12 @@ function App() {
           )}
           {made?.checks?.length > 0 && (
             <ul className="eng-checks" aria-label="Manufacturing checks">
-              {made.checks.slice(0, 4).map((c, i) => (
-                <li key={i}><button type="button" className={c.level} onClick={() => showCheck(c)}>{c.message}</button></li>
+              {made.checks.slice(0, 2).map((c, i) => (
+                <li key={i}><button type="button" className={c.level} onClick={() => showCheck(c)}><span>{c.message}</span></button></li>
               ))}
-              {made.checks.length > 4 && <li className="more">+{made.checks.length - 4} more</li>}
+              {made.checks.length > 2 && (
+                <li><button type="button" className="more" onClick={() => setDialog({ type: "checks" })}>All {made.checks.length} checks</button></li>
+              )}
             </ul>
           )}
         </div>
@@ -1864,6 +1887,17 @@ function App() {
           <Seg label="Format" options={{ stl: "STL", "3mf": "3MF", step: "STEP", dxf: "DXF", svg: "Drawing" }} value={dialog.format} onChange={f => setDialog(d => ({ ...d, format: f }))} />
           {note({ step: "STEP keeps exact curves, for CNC and other CAD programs", dxf: "The flat profile for laser, waterjet or plasma; a bent part's flat pattern with its bend lines",
             svg: "A shop drawing: sizes, hole table, material and notes, ready to print" }[dialog.format] || "For a slicer and a 3D printer")}
+        </Dialog>
+      )}
+
+      {dialog?.type === "checks" && made?.checks && (
+        <Dialog onClose={close} label="Checks" onSubmit={close} actions={<button type="submit" className="primary">Done</button>}>
+          <ul className="eng-checks wide" aria-label="Manufacturing checks">
+            {made.checks.map((c, i) => (
+              <li key={i}><button type="button" className={c.level} onClick={() => { setDialog(null); showCheck(c); }}>{c.message}</button></li>
+            ))}
+          </ul>
+          {note("Tap a check to see the shape it is about")}
         </Dialog>
       )}
 

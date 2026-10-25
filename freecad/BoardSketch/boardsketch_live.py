@@ -229,7 +229,7 @@ class Live(QtCore.QObject):
         obj.Label = "Preview" if info.get("preview") else "Part"
         obj.Shape = shape
         doc.recompute()
-        style(obj, info.get("preview"))
+        style(obj, info.get("preview"), info.get("material"))
         view = Gui.getDocument(doc.Name).activeView()
 
         # The camera and the build-up animation follow big changes only, not every stroke.
@@ -263,13 +263,14 @@ class Live(QtCore.QObject):
         self.card.show_state("live", title, detail)
 
 
-def style(obj, preview=False):
+def style(obj, preview=False, material=None):
     vo = obj.ViewObject
-    vo.ShapeColor = PART_COLOR
+    # The material picked on the iPad colours the part (and acrylic shows see-through); otherwise light steel
+    vo.ShapeColor = tuple(material["color"]) if material and material.get("color") else PART_COLOR
     vo.LineColor = EDGE_COLOR
     vo.LineWidth = 1.5
     vo.DisplayMode = "Flat Lines"
-    vo.Transparency = PREVIEW_TRANSPARENCY if preview else 0
+    vo.Transparency = PREVIEW_TRANSPARENCY if preview else int((material or {}).get("transparency") or 0)
 
 
 def build_up(obj, ms, done=None):

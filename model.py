@@ -336,7 +336,10 @@ def export(solid, folder, kinds=FORMATS, part=None, info=None):
             elif kind == "brep":
                 solid.exportBrep(str(tmp))
             elif kind == "glb":
-                cq.Assembly(solid, color=cq.Color(0.55, 0.62, 0.72)).export(str(tmp), "GLTF")
+                # The material picked on the iPad colours the 3D file; otherwise light steel
+                material = (info or {}).get("material") or {}
+                rgb, see_through = material.get("color") or (0.55, 0.62, 0.72), material.get("transparency") or 0
+                cq.Assembly(solid, color=cq.Color(*rgb, 1 - see_through / 100)).export(str(tmp), "GLTF")
             else:
                 cq.exporters.export(solid, str(tmp), kind.upper(), tolerance=0.05, angularTolerance=0.1)
             tmp.replace(folder / name)
