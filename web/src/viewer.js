@@ -32,6 +32,8 @@ export function createViewer(host, session, onInfo) {
   scene.add(grid);
 
   let part = null, size = 0, seq = null, stopped = false, timer = null;
+  let moved = false;   // the viewer has turned the view themselves, so a resize leaves it alone
+  controls.addEventListener("start", () => { moved = true; });
   const loader = new GLTFLoader();
 
   const resize = () => {
@@ -39,6 +41,7 @@ export function createViewer(host, session, onInfo) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    if (part && !moved) fit(new THREE.Box3().setFromObject(part));   // e.g. the iPad turned, and the panel moved
   };
   const observer = new ResizeObserver(resize);
   observer.observe(host);
@@ -52,12 +55,16 @@ export function createViewer(host, session, onInfo) {
     part = null;
   }
 
+  // Frames the part with a margin, in whichever way the panel is narrower: a tall side panel is limited by
+  // its width, a wide bottom panel by its height.
   function fit(box) {
-    const length = box.getSize(new THREE.Vector3()).length() || 100, centre = box.getCenter(new THREE.Vector3());
+    const radius = (box.getSize(new THREE.Vector3()).length() || 100) / 2, centre = box.getCenter(new THREE.Vector3());
+    const vertical = THREE.MathUtils.degToRad(camera.fov), horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
+    const distance = 1.15 * radius / Math.sin(Math.min(vertical, horizontal) / 2);
     controls.target.copy(centre);
-    camera.position.copy(centre).add(new THREE.Vector3(1, 0.85, 1.1).normalize().multiplyScalar(length * 1.5));
-    camera.near = length / 200;
-    camera.far = length * 200;
+    camera.position.copy(centre).add(new THREE.Vector3(1, 0.85, 1.1).normalize().multiplyScalar(distance));
+    camera.near = distance / 100;
+    camera.far = distance * 100;
     camera.updateProjectionMatrix();
   }
 
@@ -94,7 +101,7 @@ export function createViewer(host, session, onInfo) {
   poll();
 
   return {
-    refit() { if (part) fit(new THREE.Box3().setFromObject(part)); },
+    refit() { moved = false; if (part) fit(new THREE.Box3().setFromObject(part)); },
     dispose() {
       stopped = true;
       clearTimeout(timer);

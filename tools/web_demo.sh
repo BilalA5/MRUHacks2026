@@ -1,8 +1,8 @@
 #!/bin/sh
 # Puts the iPad canvas and its 3D preview on the web for a demo, with this laptop doing the CadQuery work.
 #
-#   1. Start the server:           python3 server.py
-#   2. Then, in another terminal:  sh tools/web_demo.sh
+#   1. Start the server:           python3 server.py      (or PORT=8001 python3 server.py to keep 8000 free)
+#   2. Then, in another terminal:  sh tools/web_demo.sh   (PORT=8001 sh tools/web_demo.sh to match)
 #
 # It opens a Cloudflare quick tunnel to the server (free, no account; a new address every run),
 # deploys the canvas to Vercel built to use that tunnel, and keeps the tunnel open until Ctrl+C.
@@ -11,11 +11,12 @@
 # or a token from vercel.com/account/tokens in VERCEL_TOKEN (never commit it).
 set -e
 cd "$(dirname "$0")/.."
+PORT=${PORT:-8000}
 
-curl -sf http://localhost:8000/api/health >/dev/null || { echo "Start the server first: python3 server.py"; exit 1; }
+curl -sf http://localhost:$PORT/api/health >/dev/null || { echo "Start the server first: PORT=$PORT python3 server.py"; exit 1; }
 
 LOG=$(mktemp)
-cloudflared tunnel --no-autoupdate --url http://localhost:8000 >"$LOG" 2>&1 &
+cloudflared tunnel --no-autoupdate --url http://localhost:$PORT >"$LOG" 2>&1 &
 TUNNEL=$!
 trap 'kill $TUNNEL 2>/dev/null; rm -f "$LOG"' EXIT INT TERM
 

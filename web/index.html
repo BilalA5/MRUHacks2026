@@ -8,14 +8,20 @@
 <link rel="stylesheet" href="/dist/app.css">
 <style>
 html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscroll-behavior:none}
-.board{position:fixed;inset:0}
+/* The 3D panel splits the screen with the drawing: side by side on a wide screen, drawing on top and 3D below
+   on a narrow or upright one. --split-r and --split-b are the room it takes; the board, the undo buttons
+   and the messages move out of its way. */
+:root{--split-r:0px;--split-b:0px}
+body.bevel-split{--split-r:min(44vw,760px)}
+@media (max-aspect-ratio:1/1),(max-width:900px){body.bevel-split{--split-r:0px;--split-b:44vh}}
+.board{position:fixed;inset:0;right:var(--split-r);bottom:var(--split-b)}
 /* Keep Excalidraw's core toolbar and zoom; hide the extras (library, menu, help, hints, welcome) */
 .default-sidebar-trigger,.main-menu-trigger,.help-icon,.HintViewer,.welcome-screen-center{display:none!important}
 /* Excalidraw's own undo and redo move to the top right, together */
-.undo-redo-buttons{position:fixed!important;top:calc(16px + env(safe-area-inset-top,0px));right:16px;left:auto!important;bottom:auto!important;z-index:10;display:flex;gap:6px}
+.undo-redo-buttons{position:fixed!important;top:calc(16px + env(safe-area-inset-top,0px));right:calc(16px + var(--split-r));left:auto!important;bottom:auto!important;z-index:10;display:flex;gap:6px}
 .undo-button-container,.redo-button-container{position:static!important}
 /* Engineering sidebar on the left */
-.eng-side{position:absolute;left:16px;top:72px;z-index:10;width:188px;display:flex;flex-direction:column;gap:4px;padding:10px;max-height:calc(100% - 140px);overflow-y:auto;scrollbar-width:none;background:#fff;border:1px solid #e3e7eb;border-radius:14px;box-shadow:0 8px 24px #1f2a3614}
+.eng-side{position:absolute;left:16px;top:72px;z-index:10;width:188px;display:flex;flex-direction:column;gap:4px;padding:10px;max-height:calc(100% - 156px);overflow-y:auto;scrollbar-width:none;background:#fff;border:1px solid #e3e7eb;border-radius:14px;box-shadow:0 8px 24px #1f2a3614}
 .eng-side::-webkit-scrollbar{display:none}
 .eng-side section + section{margin-top:8px}
 .eng-side h3{margin:0 0 4px 8px;font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8a96a3}
@@ -70,16 +76,16 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-chips button.on{background:#EAF0FF;border-color:#2563EB;color:#1d4ed8}
 .eng-dialog select{height:44px;padding:0 10px;border:1px solid #cfd6df;border-radius:9px;background:#fff;font:16px -apple-system,BlinkMacSystemFont,sans-serif;color:#1F2A36}
 /* Status toast: shows what an engineering tool did, or why it could not run */
-.eng-toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:12px;max-width:min(440px,calc(100vw - 32px));padding:10px 16px;border:1px solid #e3e7eb;border-radius:12px;background:#fff;color:#1F2A36;font:500 14px/1.35 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 8px 24px #1f2a3614;pointer-events:none;animation:eng-toast-in 200ms cubic-bezier(.23,1,.32,1) both}
+.eng-toast{position:fixed;left:calc((100vw - var(--split-r)) / 2);bottom:calc(24px + var(--split-b) + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:12px;max-width:min(440px,calc(100vw - var(--split-r) - 32px));padding:10px 16px;border:1px solid #e3e7eb;border-radius:12px;background:#fff;color:#1F2A36;font:500 14px/1.35 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 8px 24px #1f2a3614;pointer-events:none;animation:eng-toast-in 200ms cubic-bezier(.23,1,.32,1) both}
 .eng-toast.warn{background:#FFFAEB;border-color:#F3DFA8;color:#7A4A06}
 .eng-toast.leaving{animation:eng-toast-out 150ms cubic-bezier(.23,1,.32,1) both}
 .eng-toast.sticky{pointer-events:auto;padding:6px 6px 6px 16px}
 .eng-toast button{min-height:36px;padding:0 14px;border:0;border-radius:8px;background:#f0f3f6;color:#1F2A36;font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;transition:transform 160ms cubic-bezier(.23,1,.32,1)}
 .eng-toast button:active{transform:scale(.97)}
 /* First-run hint while the sheet is empty */
-.eng-hint{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:5;max-width:min(460px,calc(100vw - 32px));color:#7b8794;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none}
+.eng-hint{position:fixed;left:calc((100vw - var(--split-r)) / 2);bottom:calc(28px + var(--split-b) + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:5;max-width:min(460px,calc(100vw - var(--split-r) - 32px));color:#7b8794;font:500 14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none}
 /* 3D preview: the laptop's model of the drawing, in a dark CAD-style panel at the top right, clear of the toasts and hints */
-.eng-3d{position:fixed;right:16px;top:calc(72px + env(safe-area-inset-top,0px));z-index:20;width:min(46vw,640px);height:min(52vh,520px);display:flex;flex-direction:column;overflow:hidden;background:#0B0F17;border:1px solid #1F2937;border-radius:14px;box-shadow:0 18px 48px #0b0f1740;touch-action:none;animation:eng-rise 200ms cubic-bezier(.23,1,.32,1)}
+.eng-3d{position:fixed;top:0;right:0;bottom:0;z-index:20;width:var(--split-r);padding-top:env(safe-area-inset-top,0px);display:flex;flex-direction:column;overflow:hidden;background:#0B0F17;border-left:1px solid #1F2937;touch-action:none}
 .eng-3d header{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 6px 0 14px;background:#111723;border-bottom:1px solid #1F2937;color:#E5EAF0;font:500 12px -apple-system,BlinkMacSystemFont,sans-serif}
 .eng-3d header strong{font-weight:700;color:#35C4E8;letter-spacing:.06em}
 .eng-3d header span{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#8B98A9;font-variant-numeric:tabular-nums}
@@ -87,7 +93,9 @@ html,body,#root{height:100%;margin:0;overflow:hidden;touch-action:none;overscrol
 .eng-3d header button:active{background:#1F2937}
 .eng-3d-view{flex:1;min-height:0}
 .eng-3d-view canvas{display:block;width:100%;height:100%}
-@media (max-width:760px){.eng-3d{left:16px;right:16px;top:auto;bottom:calc(16px + env(safe-area-inset-bottom,0px));width:auto;height:42vh}}
+/* A phone: the tool sidebar becomes a narrow column of icons, so the drawing keeps most of the screen */
+@media (max-width:600px){.eng-side{width:auto;padding:6px;left:10px}.eng-side h3,.eng-side button>span:not(.ico),.eng-link span,.eng-mass{display:none}.eng-side button{justify-content:center;padding:0 8px}.eng-sheet{flex-direction:column}.eng-sheet button{min-height:40px}.eng-side .eng-checkrow{justify-content:center;padding:0;font-size:0}.eng-side .eng-checkrow .chev{display:none}}
+@media (max-aspect-ratio:1/1),(max-width:900px){.eng-3d{top:auto;left:0;width:auto;height:var(--split-b);padding-top:0;padding-bottom:env(safe-area-inset-bottom,0px);border-left:0;border-top:1px solid #1F2937}}
 @keyframes eng-toast-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 @keyframes eng-toast-out{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,4px)}}
 @keyframes eng-toast-fade{to{opacity:0}}

@@ -1225,9 +1225,17 @@ function App() {
   const [autoSnap, setAutoSnap] = useState(true);   // snap lines, arcs, circles and rectangles on lift
   const lastPart = useRef({ material: "al6061" });                 // a new part starts in the last material
   const seen = useRef(new Map());                                  // where each shape was, so its notes can follow it
-  const [made, setMade] = useState(null);
-  const [preview, setPreview] = useState(REMOTE);   // the 3D panel: open by itself on the web demo, which has no FreeCAD                          // the laptop's latest build: weight and checks
+  const [made, setMade] = useState(null);                          // the laptop's latest build: weight and checks
+  const [preview, setPreview] = useState(REMOTE);                  // the 3D panel: open by itself on the web demo, which has no FreeCAD
   const seenStrokes = useRef(new Set());   // freedraw ids already seen in onChange
+
+  // The 3D panel splits the screen with the drawing (body.bevel-split in index.html). The board changes size,
+  // so Excalidraw is told to measure itself again.
+  useEffect(() => {
+    document.body.classList.toggle("bevel-split", preview);
+    api?.refresh();
+    window.dispatchEvent(new Event("resize"));
+  }, [preview, api]);
   const activeStroke = useRef(null);       // the freedraw stroke being drawn now
   const holdPending = useRef(null);        // "held" when a pen lifts after being still, "lift" otherwise
   const strokeBy = useRef("pen");          // what drew the last stroke: pen, mouse or touch

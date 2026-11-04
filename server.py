@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -254,4 +255,5 @@ app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 # without that it waits on them forever and the old server keeps FreeCAD while a new one starts.
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_graceful_shutdown=1)
+    # PORT lets the web demo's server run beside the laptop's own one (8000), e.g. PORT=8001 python3 server.py
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), timeout_graceful_shutdown=1)
