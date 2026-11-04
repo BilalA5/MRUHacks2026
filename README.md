@@ -4,6 +4,8 @@ Sketch a part on the iPad; Bevel builds it in 3D as you draw. Our MRU Hacks 2026
 
 Working repo for our MRU Hacks 2026 project.
 
+<picture><img src="docs/demo.gif" alt="MRUHacks26 Bevel demo"></picture>
+
 ## Current direction
 
 **Sketch to 3D part, with a CAD-style view.**
